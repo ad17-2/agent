@@ -1,14 +1,10 @@
-import { generateText, streamText, stepCountIs, type ModelMessage, type Tool } from "ai";
-import { AgentError } from "./errors.js";
+import { generateText, streamText, stepCountIs } from "ai";
+import { AgentError } from "../errors.js";
+import { buildHistoryFromResult, buildMessages } from "../message/index.js";
 import type {
   AgentEvent,
   AgentOptions,
   AgentResult,
-  Attachment,
-  BackoffStrategy,
-  ImageInput,
-  Logger,
-  Message,
   RetryConfig,
   RunOptions,
   SerializedHistory,
@@ -16,7 +12,10 @@ import type {
   StopReason,
   TokenUsage,
   ToolCallRecord,
-} from "./types.js";
+} from "../types.js";
+import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
+import { HistoryManager } from "./history.js";
+import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
 const DEFAULT_MAX_TOKENS = 4096;
@@ -40,55 +39,6 @@ export interface Agent {
   importHistory(history: SerializedHistory): void;
 }
 
-function calculateBackoff(
-  attempt: number,
-  strategy: BackoffStrategy,
-  initialDelayMs: number,
-  maxDelayMs: number
-): number {
-  let delay: number;
-  switch (strategy) {
-    case "fixed":
-      delay = initialDelayMs;
-      break;
-    case "linear":
-      delay = initialDelayMs * attempt;
-      break;
-    case "exponential":
-      delay = initialDelayMs * Math.pow(2, attempt - 1);
-      break;
-  }
-  return Math.min(delay, maxDelayMs);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function createTimeoutSignal(timeoutMs: number, existingSignal?: AbortSignal): AbortSignal {
-  const controller = new AbortController();
-
-  const timer = setTimeout(() => {
-    controller.abort(new Error(`Request timed out after ${timeoutMs}ms`));
-  }, timeoutMs);
-
-  if (existingSignal) {
-    if (existingSignal.aborted) {
-      clearTimeout(timer);
-      controller.abort(existingSignal.reason);
-    } else {
-      existingSignal.addEventListener("abort", () => {
-        clearTimeout(timer);
-        controller.abort(existingSignal.reason);
-      });
-    }
-  }
-
-  controller.signal.addEventListener("abort", () => clearTimeout(timer));
-
-  return controller.signal;
-}
-
 export function createAgent(options: AgentOptions): Agent {
   const {
     model,
@@ -110,22 +60,7 @@ export function createAgent(options: AgentOptions): Agent {
     onComplete,
   } = options;
 
-  const maxMessages = conversation?.maxMessages ?? DEFAULT_MAX_MESSAGES;
-  const ttlMs = conversation?.ttlMs ?? DEFAULT_TTL_MS;
   const retry = { ...DEFAULT_RETRY, ...retryConfig };
-
-  let history: Message[] = [];
-  let lastUpdated = Date.now();
-
-  const toolTimings = new Map<string, number>();
-  const wrappedTools = wrapToolsWithCallbacks(
-    tools,
-    toolTimings,
-    logger,
-    onToolCall,
-    onToolResult,
-    onError
-  );
 
   function log(
     level: "debug" | "info" | "warn" | "error",
@@ -135,56 +70,25 @@ export function createAgent(options: AgentOptions): Agent {
     logger?.[level](message, meta);
   }
 
-  function getHistory(): Message[] {
-    if (Date.now() - lastUpdated > ttlMs) {
-      log("debug", "History expired, clearing");
-      history = [];
-    }
-    return history;
-  }
+  const historyManager = new HistoryManager(
+    {
+      maxMessages: conversation?.maxMessages ?? DEFAULT_MAX_MESSAGES,
+      ttlMs: conversation?.ttlMs ?? DEFAULT_TTL_MS,
+    },
+    (msg) => log("debug", msg)
+  );
 
-  function saveHistory(messages: Message[]): void {
-    history = messages.slice(-maxMessages);
-    lastUpdated = Date.now();
-  }
+  const toolTimings = new Map<string, number>();
+  const wrappedTools = wrapToolsWithCallbacks(tools, toolTimings, logger, {
+    onToolCall,
+    onToolResult,
+    onError,
+  });
 
-  async function executeWithRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= retry.maxAttempts; attempt++) {
-      if (signal?.aborted) {
-        throw new AgentError("Request was aborted", "ABORTED");
-      }
-
-      try {
-        return await fn();
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        if (attempt === retry.maxAttempts) {
-          break;
-        }
-
-        if (!retry.retryOn(lastError)) {
-          throw lastError;
-        }
-
-        const delayMs = calculateBackoff(
-          attempt,
-          retry.backoff,
-          retry.initialDelayMs,
-          retry.maxDelayMs
-        );
-        log("warn", `Attempt ${attempt} failed, retrying in ${delayMs}ms`, {
-          error: lastError.message,
-        });
-
-        await sleep(delayMs);
-      }
-    }
-
-    throw lastError;
-  }
+  const retryOptions: RetryOptions = {
+    ...retry,
+    logger: (msg, meta) => log("warn", msg, meta),
+  };
 
   function extractReasoningText(reasoning: unknown): string | undefined {
     if (!reasoning) return undefined;
@@ -215,7 +119,7 @@ export function createAgent(options: AgentOptions): Agent {
 
       await onStart?.(input);
 
-      const currentHistory = getHistory();
+      const currentHistory = historyManager.get();
       const toolsCalled: ToolCallRecord[] = [];
       let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
@@ -276,6 +180,7 @@ export function createAgent(options: AgentOptions): Agent {
                 stepIndex++;
               },
             }),
+          retryOptions,
           signal
         );
 
@@ -296,7 +201,7 @@ export function createAgent(options: AgentOptions): Agent {
           attachments,
           result.text
         );
-        saveHistory(updatedHistory);
+        historyManager.save(updatedHistory);
 
         const agentResult: AgentResult = {
           message: result.text,
@@ -368,7 +273,7 @@ export function createAgent(options: AgentOptions): Agent {
       yield { type: "start", timestamp: Date.now() };
       await onStart?.(input);
 
-      const currentHistory = getHistory();
+      const currentHistory = historyManager.get();
       const toolsCalled: ToolCallRecord[] = [];
       let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
@@ -488,7 +393,7 @@ export function createAgent(options: AgentOptions): Agent {
           attachments,
           text
         );
-        saveHistory(updatedHistory);
+        historyManager.save(updatedHistory);
 
         const agentResult: AgentResult = {
           message: text,
@@ -517,194 +422,15 @@ export function createAgent(options: AgentOptions): Agent {
     },
 
     clearHistory(): void {
-      history = [];
-      lastUpdated = Date.now();
-      log("debug", "History cleared");
+      historyManager.clear();
     },
 
     exportHistory(): SerializedHistory {
-      return {
-        version: 1,
-        messages: [...history],
-        exportedAt: Date.now(),
-      };
+      return historyManager.export();
     },
 
     importHistory(serialized: SerializedHistory): void {
-      if (serialized.version !== 1) {
-        throw new AgentError(
-          `Unsupported history version: ${serialized.version}`,
-          "TOOL_VALIDATION"
-        );
-      }
-      history = [...serialized.messages];
-      lastUpdated = Date.now();
-      log("debug", "History imported", { messageCount: history.length });
+      historyManager.import(serialized);
     },
   };
-}
-
-function wrapToolsWithCallbacks(
-  tools: Record<string, Tool>,
-  timings: Map<string, number>,
-  logger: Logger | undefined,
-  onToolCall?: (name: string, input: unknown) => void | Promise<void>,
-  onToolResult?: (name: string, result: unknown) => void | Promise<void>,
-  onError?: (
-    error: Error,
-    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
-  ) => void | Promise<void>
-): Record<string, Tool> {
-  const wrapped: Record<string, Tool> = {};
-
-  for (const [name, tool] of Object.entries(tools)) {
-    if (!tool.execute) {
-      wrapped[name] = tool;
-      continue;
-    }
-
-    const originalExecute = tool.execute;
-
-    wrapped[name] = {
-      ...tool,
-      execute: async (
-        args: Parameters<typeof originalExecute>[0],
-        execOptions: Parameters<typeof originalExecute>[1]
-      ) => {
-        const toolCallId = execOptions?.toolCallId ?? "";
-        const start = Date.now();
-
-        logger?.debug(`Tool call: ${name}`, { input: args });
-        await onToolCall?.(name, args);
-
-        try {
-          const result = await originalExecute(args, execOptions);
-          logger?.debug(`Tool result: ${name}`, { durationMs: Date.now() - start });
-          await onToolResult?.(name, result);
-
-          timings.set(toolCallId, Date.now() - start);
-          return result;
-        } catch (error) {
-          const errorObj = error instanceof Error ? error : new Error(String(error));
-          logger?.error(`Tool error: ${name}`, { error: errorObj.message });
-          await onError?.(errorObj, { phase: "tool", toolName: name });
-          throw error;
-        }
-      },
-    };
-  }
-
-  return wrapped;
-}
-
-type UserContentPart =
-  | { type: "text"; text: string }
-  | { type: "image"; image: string | URL; mediaType?: string }
-  | { type: "file"; data: string | URL; mediaType: string; filename?: string };
-
-function buildMessages(
-  history: Message[],
-  input: string,
-  image?: ImageInput,
-  attachments?: Attachment[]
-): ModelMessage[] {
-  const messages: ModelMessage[] = [];
-
-  for (const msg of history) {
-    if (typeof msg.content === "string") {
-      messages.push({ role: msg.role, content: msg.content });
-    }
-  }
-
-  const hasAttachments = attachments && attachments.length > 0;
-  const hasImage = !!image;
-
-  if (hasAttachments || hasImage) {
-    const content: UserContentPart[] = [];
-
-    if (hasImage) {
-      content.push({
-        type: "image",
-        image: image.base64,
-        mediaType: image.mimeType,
-      });
-    }
-
-    if (hasAttachments) {
-      for (const attachment of attachments) {
-        switch (attachment.type) {
-          case "image":
-            if (attachment.source === "base64") {
-              content.push({
-                type: "image",
-                image: attachment.base64,
-                mediaType: attachment.mimeType,
-              });
-            } else {
-              content.push({
-                type: "image",
-                image: new URL(attachment.url),
-              });
-            }
-            break;
-
-          case "pdf":
-            if (attachment.source === "base64") {
-              content.push({
-                type: "file",
-                data: attachment.base64,
-                mediaType: "application/pdf",
-              });
-            } else {
-              content.push({
-                type: "file",
-                data: new URL(attachment.url),
-                mediaType: "application/pdf",
-              });
-            }
-            break;
-
-          case "file":
-            content.push({
-              type: "file",
-              data: attachment.base64,
-              mediaType: attachment.mimeType,
-              filename: attachment.filename,
-            });
-            break;
-        }
-      }
-    }
-
-    content.push({ type: "text", text: input });
-    messages.push({ role: "user", content } as ModelMessage);
-  } else {
-    messages.push({ role: "user", content: input });
-  }
-
-  return messages;
-}
-
-function buildHistoryFromResult(
-  previousHistory: Message[],
-  userInput: string,
-  image: ImageInput | undefined,
-  attachments: Attachment[] | undefined,
-  assistantResponse: string
-): Message[] {
-  const hasMultiModal = !!image || (attachments && attachments.length > 0);
-
-  const userMessage: Message = hasMultiModal
-    ? {
-        role: "user",
-        content: [{ type: "text", text: userInput }],
-        timestamp: Date.now(),
-      }
-    : { role: "user", content: userInput, timestamp: Date.now() };
-
-  return [
-    ...previousHistory,
-    userMessage,
-    { role: "assistant", content: assistantResponse, timestamp: Date.now() },
-  ];
 }

@@ -1,4 +1,4 @@
-export { createAgent, type Agent } from "./agent.js";
+export { createAgent, type Agent } from "./agent/index.js";
 export {
   defineTool,
   type Tool,

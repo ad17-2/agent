@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { createAgent } from "./agent.js";
-import { defineTool } from "./tool.js";
-import { AgentError } from "./errors.js";
-import type { AgentResult, SerializedHistory } from "./types.js";
+import { createAgent } from "../src/agent/index.js";
+import { defineTool } from "../src/tool.js";
+import { AgentError } from "../src/errors.js";
+import type { AgentResult, SerializedHistory } from "../src/types.js";
 
 vi.mock("ai", async (importOriginal) => {
   const original = (await importOriginal()) as Record<string, unknown>;
