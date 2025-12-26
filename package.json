@@ -1,6 +1,6 @@
 {
   "name": "@ad17-2/agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight agentic loop for Claude powered by Vercel AI SDK",
   "type": "module",
   "main": "./dist/index.js",
@@ -44,7 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ad17-2/agent"
+    "url": "git+https://github.com/ad17-2/agent.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
