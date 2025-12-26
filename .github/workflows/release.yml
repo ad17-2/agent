@@ -5,12 +5,23 @@ on:
     branches: [main]
     paths:
       - "package.json"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., v0.4.1). Leave empty to use package.json version."
+        required: false
+        type: string
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,18 +38,54 @@ jobs:
         id: check
         run: |
           if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag v${{ steps.version.outputs.version }} already exists"
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.version.outputs.version }} already exists, skipping tag creation"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "should_publish=true" >> $GITHUB_OUTPUT
             echo "Tag v${{ steps.version.outputs.version }} does not exist"
           fi
 
       - name: Create and push tag
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.should_publish == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
           echo "✅ Created and pushed tag v${{ steps.version.outputs.version }}"
+
+  publish:
+    needs: release
+    if: needs.release.outputs.should_publish == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || needs.release.outputs.tag }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+
+      - run: pnpm install
+
+      - run: pnpm test
+
+      - run: pnpm build
+
+      - run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "✅ Published @ad17-2/agent@${{ needs.release.outputs.version || inputs.version }}" >> $GITHUB_STEP_SUMMARY
