@@ -5,7 +5,6 @@ import type {
   AgentOptions,
   AgentResult,
   Attachment,
-  BackoffStrategy,
   ImageInput,
   Logger,
   Message,
@@ -17,6 +16,7 @@ import type {
   TokenUsage,
   ToolCallRecord,
 } from "./types.js";
+import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "./utils/index.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
 const DEFAULT_MAX_TOKENS = 4096;
@@ -38,55 +38,6 @@ export interface Agent {
   clearHistory(): void;
   exportHistory(): SerializedHistory;
   importHistory(history: SerializedHistory): void;
-}
-
-function calculateBackoff(
-  attempt: number,
-  strategy: BackoffStrategy,
-  initialDelayMs: number,
-  maxDelayMs: number
-): number {
-  let delay: number;
-  switch (strategy) {
-    case "fixed":
-      delay = initialDelayMs;
-      break;
-    case "linear":
-      delay = initialDelayMs * attempt;
-      break;
-    case "exponential":
-      delay = initialDelayMs * Math.pow(2, attempt - 1);
-      break;
-  }
-  return Math.min(delay, maxDelayMs);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function createTimeoutSignal(timeoutMs: number, existingSignal?: AbortSignal): AbortSignal {
-  const controller = new AbortController();
-
-  const timer = setTimeout(() => {
-    controller.abort(new Error(`Request timed out after ${timeoutMs}ms`));
-  }, timeoutMs);
-
-  if (existingSignal) {
-    if (existingSignal.aborted) {
-      clearTimeout(timer);
-      controller.abort(existingSignal.reason);
-    } else {
-      existingSignal.addEventListener("abort", () => {
-        clearTimeout(timer);
-        controller.abort(existingSignal.reason);
-      });
-    }
-  }
-
-  controller.signal.addEventListener("abort", () => clearTimeout(timer));
-
-  return controller.signal;
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -148,43 +99,10 @@ export function createAgent(options: AgentOptions): Agent {
     lastUpdated = Date.now();
   }
 
-  async function executeWithRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= retry.maxAttempts; attempt++) {
-      if (signal?.aborted) {
-        throw new AgentError("Request was aborted", "ABORTED");
-      }
-
-      try {
-        return await fn();
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        if (attempt === retry.maxAttempts) {
-          break;
-        }
-
-        if (!retry.retryOn(lastError)) {
-          throw lastError;
-        }
-
-        const delayMs = calculateBackoff(
-          attempt,
-          retry.backoff,
-          retry.initialDelayMs,
-          retry.maxDelayMs
-        );
-        log("warn", `Attempt ${attempt} failed, retrying in ${delayMs}ms`, {
-          error: lastError.message,
-        });
-
-        await sleep(delayMs);
-      }
-    }
-
-    throw lastError;
-  }
+  const retryOptions: RetryOptions = {
+    ...retry,
+    logger: (msg, meta) => log("warn", msg, meta),
+  };
 
   function extractReasoningText(reasoning: unknown): string | undefined {
     if (!reasoning) return undefined;
@@ -276,6 +194,7 @@ export function createAgent(options: AgentOptions): Agent {
                 stepIndex++;
               },
             }),
+          retryOptions,
           signal
         );
 
