@@ -1,50 +1,94 @@
 import type { LanguageModel, Tool } from "ai";
 
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface Logger {
+  debug(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
+}
+
+export type BackoffStrategy = "fixed" | "linear" | "exponential";
+
+export interface RetryConfig {
+  maxAttempts?: number;
+  backoff?: BackoffStrategy;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  retryOn?: (error: Error) => boolean;
+}
+
+export interface TimeoutConfig {
+  runTimeoutMs?: number;
+  toolTimeoutMs?: number;
+}
+
+export interface ThinkingConfig {
+  enabled: boolean;
+  budgetTokens?: number;
+}
+
+export type ImageMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+export type AttachmentMimeType = ImageMimeType | "application/pdf";
+
+export interface ImageInput {
+  base64: string;
+  mimeType: ImageMimeType;
+}
+
+interface BaseAttachment {
+  name?: string;
+}
+
+export interface Base64ImageAttachment extends BaseAttachment {
+  type: "image";
+  source: "base64";
+  base64: string;
+  mimeType: ImageMimeType;
+}
+
+export interface UrlImageAttachment extends BaseAttachment {
+  type: "image";
+  source: "url";
+  url: string;
+}
+
+export interface Base64PdfAttachment extends BaseAttachment {
+  type: "pdf";
+  source: "base64";
+  base64: string;
+}
+
+export interface UrlPdfAttachment extends BaseAttachment {
+  type: "pdf";
+  source: "url";
+  url: string;
+}
+
+export interface FileAttachment extends BaseAttachment {
+  type: "file";
+  base64: string;
+  mimeType: string;
+  filename: string;
+}
+
+export type Attachment =
+  | Base64ImageAttachment
+  | UrlImageAttachment
+  | Base64PdfAttachment
+  | UrlPdfAttachment
+  | FileAttachment;
+
 export interface ConversationConfig {
   maxMessages?: number;
   ttlMs?: number;
 }
 
-export interface AgentOptions {
-  model: LanguageModel;
-  systemPrompt: string;
-  tools: Record<string, Tool>;
-  maxIterations?: number;
-  maxTokens?: number;
-  conversation?: ConversationConfig;
-  onToolCall?: (toolName: string, input: unknown) => void;
-  onToolResult?: (toolName: string, result: unknown) => void;
-}
-
-export interface RunOptions {
-  image?: ImageInput;
-  signal?: AbortSignal;
-}
-
-export interface ImageInput {
-  base64: string;
-  mimeType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-}
-
-export interface AgentResult {
-  message: string;
-  toolsCalled: ToolCallRecord[];
-  iterations: number;
-  stopReason: StopReason;
-}
-
-export interface ToolCallRecord {
-  name: string;
-  input: unknown;
-  output: unknown;
-  durationMs: number;
-}
-
-export type StopReason = "end_turn" | "max_iterations" | "error" | "aborted";
-
 export type Message = {
   role: "user" | "assistant";
   content: string | ContentBlock[];
+  timestamp?: number;
 };
 
 export type ContentBlock =
@@ -52,3 +96,94 @@ export type ContentBlock =
   | { type: "image"; image: string; mimeType: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: unknown }
   | { type: "tool-result"; toolCallId: string; result: unknown };
+
+export interface SerializedHistory {
+  version: 1;
+  messages: Message[];
+  exportedAt: number;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface ToolCallRecord {
+  name: string;
+  input: unknown;
+  output: unknown;
+  durationMs: number;
+  error?: boolean;
+  errorMessage?: string;
+}
+
+export type AgentEvent =
+  | { type: "start"; timestamp: number }
+  | { type: "text-delta"; content: string }
+  | { type: "text-complete"; content: string }
+  | { type: "tool-call-start"; name: string; input: unknown; toolCallId: string }
+  | {
+      type: "tool-call-complete";
+      name: string;
+      output: unknown;
+      toolCallId: string;
+      durationMs: number;
+    }
+  | { type: "tool-call-error"; name: string; error: string; toolCallId: string }
+  | { type: "step-complete"; stepIndex: number; toolsCalled: ToolCallRecord[] }
+  | { type: "thinking"; content: string }
+  | { type: "complete"; result: AgentResult }
+  | { type: "error"; error: Error };
+
+export interface StepInfo {
+  stepIndex: number;
+  toolsCalled: ToolCallRecord[];
+  textGenerated: string;
+}
+
+export interface AgentHooks {
+  onStart?: (input: string) => void | Promise<void>;
+  onStep?: (step: StepInfo) => void | Promise<void>;
+  onToolCall?: (toolName: string, input: unknown) => void | Promise<void>;
+  onToolResult?: (toolName: string, result: unknown) => void | Promise<void>;
+  onError?: (
+    error: Error,
+    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
+  ) => void | Promise<void>;
+  onComplete?: (result: AgentResult) => void | Promise<void>;
+}
+
+export interface AgentOptions extends AgentHooks {
+  model: LanguageModel;
+  systemPrompt: string;
+  tools: Record<string, Tool>;
+  maxIterations?: number;
+  maxTokens?: number;
+  conversation?: ConversationConfig;
+  thinking?: ThinkingConfig;
+  retry?: RetryConfig;
+  timeout?: TimeoutConfig;
+  logger?: Logger;
+  traceId?: string;
+}
+
+export interface RunOptions {
+  /** @deprecated Use `attachments` instead */
+  image?: ImageInput;
+  attachments?: Attachment[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  traceId?: string;
+}
+
+export type StopReason = "end_turn" | "max_iterations" | "error" | "aborted" | "timeout";
+
+export interface AgentResult {
+  message: string;
+  toolsCalled: ToolCallRecord[];
+  iterations: number;
+  stopReason: StopReason;
+  usage: TokenUsage;
+  thinking?: string;
+}

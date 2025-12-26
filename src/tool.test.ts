@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { defineTool } from "./tool.js";
 
@@ -27,11 +27,14 @@ describe("defineTool", () => {
       handler: async ({ name }) => `Hello, ${name}!`,
     });
 
-    const result = await tool.execute!({ name: "World" }, {
-      toolCallId: "test-id",
-      abortSignal: undefined,
-      messages: [],
-    });
+    const result = await tool.execute!(
+      { name: "World" },
+      {
+        toolCallId: "test-id",
+        abortSignal: undefined,
+        messages: [],
+      }
+    );
 
     expect(result).toBe("Hello, World!");
   });
@@ -49,12 +52,160 @@ describe("defineTool", () => {
       },
     });
 
-    await tool.execute!({}, {
-      toolCallId: "test-id",
-      abortSignal: controller.signal,
-      messages: [],
-    });
+    await tool.execute!(
+      {},
+      {
+        toolCallId: "test-id",
+        abortSignal: controller.signal,
+        messages: [],
+      }
+    );
 
     expect(receivedSignal).toBe(controller.signal);
+  });
+
+  it("passes toolCallId to handler via context", async () => {
+    let receivedToolCallId: string | undefined;
+
+    const tool = defineTool({
+      description: "Check toolCallId",
+      schema: z.object({}),
+      handler: async (_, ctx) => {
+        receivedToolCallId = ctx.toolCallId;
+        return "done";
+      },
+    });
+
+    await tool.execute!(
+      {},
+      {
+        toolCallId: "my-tool-call-123",
+        abortSignal: undefined,
+        messages: [],
+      }
+    );
+
+    expect(receivedToolCallId).toBe("my-tool-call-123");
+  });
+
+  it("calls onError handler when tool throws", async () => {
+    const onError = vi.fn().mockReturnValue({ error: "handled" });
+
+    const tool = defineTool({
+      description: "Failing tool",
+      schema: z.object({ value: z.number() }),
+      handler: async () => {
+        throw new Error("Tool failed");
+      },
+      onError,
+    });
+
+    const result = await tool.execute!(
+      { value: 42 },
+      {
+        toolCallId: "error-test",
+        abortSignal: undefined,
+        messages: [],
+      }
+    );
+
+    expect(onError).toHaveBeenCalledWith({
+      error: expect.any(Error),
+      input: { value: 42 },
+      toolCallId: "error-test",
+    });
+    expect(result).toEqual({ error: "handled" });
+  });
+
+  it("propagates error when no onError handler", async () => {
+    const tool = defineTool({
+      description: "Failing tool",
+      schema: z.object({}),
+      handler: async () => {
+        throw new Error("Unhandled error");
+      },
+    });
+
+    await expect(
+      tool.execute!(
+        {},
+        {
+          toolCallId: "test",
+          abortSignal: undefined,
+          messages: [],
+        }
+      )
+    ).rejects.toThrow("Unhandled error");
+  });
+
+  it("respects timeout configuration", async () => {
+    const tool = defineTool({
+      description: "Slow tool",
+      schema: z.object({}),
+      handler: async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return "completed";
+      },
+      timeoutMs: 50,
+    });
+
+    await expect(
+      tool.execute!(
+        {},
+        {
+          toolCallId: "timeout-test",
+          abortSignal: undefined,
+          messages: [],
+        }
+      )
+    ).rejects.toThrow(/timed out/);
+  });
+
+  it("completes before timeout when fast enough", async () => {
+    const tool = defineTool({
+      description: "Fast tool",
+      schema: z.object({}),
+      handler: async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return "completed";
+      },
+      timeoutMs: 1000,
+    });
+
+    const result = await tool.execute!(
+      {},
+      {
+        toolCallId: "fast-test",
+        abortSignal: undefined,
+        messages: [],
+      }
+    );
+
+    expect(result).toBe("completed");
+  });
+
+  it("onError can return async value", async () => {
+    const tool = defineTool({
+      description: "Async error handler",
+      schema: z.object({}),
+      handler: async () => {
+        throw new Error("Failed");
+      },
+      onError: async ({ error }) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return { recovered: true, message: error.message };
+      },
+    });
+
+    const result = await tool.execute!(
+      {},
+      {
+        toolCallId: "async-error",
+        abortSignal: undefined,
+        messages: [],
+      }
+    );
+
+    expect(result).toEqual({ recovered: true, message: "Failed" });
   });
 });

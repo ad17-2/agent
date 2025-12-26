@@ -1,5 +1,5 @@
 import { generateObject, type LanguageModel } from "ai";
-import { z } from "zod";
+import type { z } from "zod";
 
 export interface GenerateStructuredOptions<T extends z.ZodTypeAny> {
   model: LanguageModel;
