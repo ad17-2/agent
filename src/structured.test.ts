@@ -15,6 +15,14 @@ const mockGenerateObject = vi.mocked(generateObject);
 
 const mockModel = { modelId: "test-model" } as Parameters<typeof generateStructured>[0]["model"];
 
+const createMockResult = <T>(object: T, usage?: { inputTokens?: number; outputTokens?: number }) => ({
+  object,
+  usage: {
+    inputTokens: usage?.inputTokens ?? 50,
+    outputTokens: usage?.outputTokens ?? 25,
+  },
+}) as unknown as Awaited<ReturnType<typeof generateObject>>;
+
 describe("generateStructured", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -26,10 +34,10 @@ describe("generateStructured", () => {
       age: z.number(),
     });
 
-    mockGenerateObject.mockResolvedValue({
-      object: { name: "Alice", age: 30 },
-      usage: { inputTokens: 50, outputTokens: 25 },
-    } as Awaited<ReturnType<typeof generateObject>>);
+    mockGenerateObject.mockResolvedValue(createMockResult(
+      { name: "Alice", age: 30 },
+      { inputTokens: 50, outputTokens: 25 }
+    ));
 
     const result = await generateStructured({
       model: mockModel,
@@ -45,10 +53,10 @@ describe("generateStructured", () => {
   it("passes image content when provided", async () => {
     const schema = z.object({ description: z.string() });
 
-    mockGenerateObject.mockResolvedValue({
-      object: { description: "A cat" },
-      usage: { inputTokens: 100, outputTokens: 10 },
-    } as Awaited<ReturnType<typeof generateObject>>);
+    mockGenerateObject.mockResolvedValue(createMockResult(
+      { description: "A cat" },
+      { inputTokens: 100, outputTokens: 10 }
+    ));
 
     await generateStructured({
       model: mockModel,
@@ -60,11 +68,12 @@ describe("generateStructured", () => {
       },
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0][0];
-    const messages = callArgs.messages as Array<{ content: unknown[] }>;
+    const callArgs = mockGenerateObject.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    const messages = callArgs![0].messages as Array<{ content: unknown[] }>;
     
-    expect(messages[0].content).toHaveLength(2);
-    expect(messages[0].content[0]).toMatchObject({
+    expect(messages[0]!.content).toHaveLength(2);
+    expect(messages[0]!.content[0]).toMatchObject({
       type: "image",
       image: "aGVsbG8=",
       mimeType: "image/png",
@@ -77,7 +86,7 @@ describe("generateStructured", () => {
     mockGenerateObject.mockResolvedValue({
       object: { value: 42 },
       usage: {},
-    } as Awaited<ReturnType<typeof generateObject>>);
+    } as unknown as Awaited<ReturnType<typeof generateObject>>);
 
     const result = await generateStructured({
       model: mockModel,
@@ -93,10 +102,10 @@ describe("generateStructured", () => {
     const schema = z.object({ done: z.boolean() });
     const controller = new AbortController();
 
-    mockGenerateObject.mockResolvedValue({
-      object: { done: true },
-      usage: { inputTokens: 10, outputTokens: 5 },
-    } as Awaited<ReturnType<typeof generateObject>>);
+    mockGenerateObject.mockResolvedValue(createMockResult(
+      { done: true },
+      { inputTokens: 10, outputTokens: 5 }
+    ));
 
     await generateStructured({
       model: mockModel,
@@ -105,17 +114,18 @@ describe("generateStructured", () => {
       signal: controller.signal,
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0][0];
-    expect(callArgs.abortSignal).toBe(controller.signal);
+    const callArgs = mockGenerateObject.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs![0].abortSignal).toBe(controller.signal);
   });
 
   it("passes maxTokens to generateObject", async () => {
     const schema = z.object({ text: z.string() });
 
-    mockGenerateObject.mockResolvedValue({
-      object: { text: "hello" },
-      usage: { inputTokens: 10, outputTokens: 5 },
-    } as Awaited<ReturnType<typeof generateObject>>);
+    mockGenerateObject.mockResolvedValue(createMockResult(
+      { text: "hello" },
+      { inputTokens: 10, outputTokens: 5 }
+    ));
 
     await generateStructured({
       model: mockModel,
@@ -124,7 +134,8 @@ describe("generateStructured", () => {
       maxTokens: 1000,
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0][0];
-    expect(callArgs.maxOutputTokens).toBe(1000);
+    const callArgs = mockGenerateObject.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs![0].maxOutputTokens).toBe(1000);
   });
 });
