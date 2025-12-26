@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
-import { defineTool } from "./tool.js";
+import { defineTool } from "../src/tool.js";
 
 describe("defineTool", () => {
   it("creates a tool with description and schema", () => {

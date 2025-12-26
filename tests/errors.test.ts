@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AgentError } from "./errors.js";
+import { AgentError } from "../src/errors.js";
 
 describe("AgentError", () => {
   it("creates error with message and code", () => {
