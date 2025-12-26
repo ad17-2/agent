@@ -1,6 +1,6 @@
 {
   "name": "@ad17-2/agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Lightweight agentic loop for Claude powered by Vercel AI SDK",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,6 +19,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -27,8 +31,14 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.7.4",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
+    "typescript-eslint": "^8.50.1",
     "vitest": "^4.0.16"
   },
   "engines": {

@@ -1,5 +1,11 @@
 export { createAgent, type Agent } from "./agent.js";
-export { defineTool, type Tool, type ToolOptions, type ToolContext } from "./tool.js";
+export {
+  defineTool,
+  type Tool,
+  type ToolOptions,
+  type ToolContext,
+  type ToolErrorContext,
+} from "./tool.js";
 export {
   generateStructured,
   type GenerateStructuredOptions,
@@ -17,7 +23,23 @@ export type {
   StopReason,
   Message,
   ContentBlock,
+  TokenUsage,
+  SerializedHistory,
+  AgentEvent,
+  StepInfo,
+  AgentHooks,
+  Attachment,
+  Base64ImageAttachment,
+  UrlImageAttachment,
+  Base64PdfAttachment,
+  UrlPdfAttachment,
+  FileAttachment,
+  ThinkingConfig,
+  RetryConfig,
+  TimeoutConfig,
+  BackoffStrategy,
+  Logger,
+  LogLevel,
 } from "./types.js";
 
 export { z } from "zod";
-export { anthropic, createAnthropic } from "@ai-sdk/anthropic";
