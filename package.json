@@ -1,0 +1,52 @@
+{
+  "name": "@ad17-2/agent",
+  "version": "0.1.0",
+  "description": "Lightweight agentic loop for Claude powered by Vercel AI SDK",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "ai": "6.0.3",
+    "@ai-sdk/anthropic": "3.0.1",
+    "zod": "4.2.1"
+  },
+  "devDependencies": {
+    "tsup": "8.5.1",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "claude",
+    "anthropic",
+    "llm",
+    "tools",
+    "vercel-ai-sdk"
+  ],
+  "author": "ad17-2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ad17-2/agent"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}
