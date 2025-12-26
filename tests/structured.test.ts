@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { generateStructured } from "./structured.js";
+import { generateStructured } from "../src/structured.js";
 
 vi.mock("ai", async (importOriginal) => {
   const original = (await importOriginal()) as Record<string, unknown>;
