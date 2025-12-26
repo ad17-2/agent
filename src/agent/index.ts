@@ -1,12 +1,10 @@
-import { generateText, streamText, stepCountIs, type Tool } from "ai";
-import { AgentError } from "./errors.js";
-import { buildHistoryFromResult, buildMessages } from "./message/index.js";
+import { generateText, streamText, stepCountIs } from "ai";
+import { AgentError } from "../errors.js";
+import { buildHistoryFromResult, buildMessages } from "../message/index.js";
 import type {
   AgentEvent,
   AgentOptions,
   AgentResult,
-  Logger,
-  Message,
   RetryConfig,
   RunOptions,
   SerializedHistory,
@@ -14,8 +12,10 @@ import type {
   StopReason,
   TokenUsage,
   ToolCallRecord,
-} from "./types.js";
-import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "./utils/index.js";
+} from "../types.js";
+import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
+import { HistoryManager } from "./history.js";
+import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
 const DEFAULT_MAX_TOKENS = 4096;
@@ -60,22 +60,7 @@ export function createAgent(options: AgentOptions): Agent {
     onComplete,
   } = options;
 
-  const maxMessages = conversation?.maxMessages ?? DEFAULT_MAX_MESSAGES;
-  const ttlMs = conversation?.ttlMs ?? DEFAULT_TTL_MS;
   const retry = { ...DEFAULT_RETRY, ...retryConfig };
-
-  let history: Message[] = [];
-  let lastUpdated = Date.now();
-
-  const toolTimings = new Map<string, number>();
-  const wrappedTools = wrapToolsWithCallbacks(
-    tools,
-    toolTimings,
-    logger,
-    onToolCall,
-    onToolResult,
-    onError
-  );
 
   function log(
     level: "debug" | "info" | "warn" | "error",
@@ -85,18 +70,20 @@ export function createAgent(options: AgentOptions): Agent {
     logger?.[level](message, meta);
   }
 
-  function getHistory(): Message[] {
-    if (Date.now() - lastUpdated > ttlMs) {
-      log("debug", "History expired, clearing");
-      history = [];
-    }
-    return history;
-  }
+  const historyManager = new HistoryManager(
+    {
+      maxMessages: conversation?.maxMessages ?? DEFAULT_MAX_MESSAGES,
+      ttlMs: conversation?.ttlMs ?? DEFAULT_TTL_MS,
+    },
+    (msg) => log("debug", msg)
+  );
 
-  function saveHistory(messages: Message[]): void {
-    history = messages.slice(-maxMessages);
-    lastUpdated = Date.now();
-  }
+  const toolTimings = new Map<string, number>();
+  const wrappedTools = wrapToolsWithCallbacks(tools, toolTimings, logger, {
+    onToolCall,
+    onToolResult,
+    onError,
+  });
 
   const retryOptions: RetryOptions = {
     ...retry,
@@ -132,7 +119,7 @@ export function createAgent(options: AgentOptions): Agent {
 
       await onStart?.(input);
 
-      const currentHistory = getHistory();
+      const currentHistory = historyManager.get();
       const toolsCalled: ToolCallRecord[] = [];
       let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
@@ -214,7 +201,7 @@ export function createAgent(options: AgentOptions): Agent {
           attachments,
           result.text
         );
-        saveHistory(updatedHistory);
+        historyManager.save(updatedHistory);
 
         const agentResult: AgentResult = {
           message: result.text,
@@ -286,7 +273,7 @@ export function createAgent(options: AgentOptions): Agent {
       yield { type: "start", timestamp: Date.now() };
       await onStart?.(input);
 
-      const currentHistory = getHistory();
+      const currentHistory = historyManager.get();
       const toolsCalled: ToolCallRecord[] = [];
       let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
@@ -406,7 +393,7 @@ export function createAgent(options: AgentOptions): Agent {
           attachments,
           text
         );
-        saveHistory(updatedHistory);
+        historyManager.save(updatedHistory);
 
         const agentResult: AgentResult = {
           message: text,
@@ -435,82 +422,15 @@ export function createAgent(options: AgentOptions): Agent {
     },
 
     clearHistory(): void {
-      history = [];
-      lastUpdated = Date.now();
-      log("debug", "History cleared");
+      historyManager.clear();
     },
 
     exportHistory(): SerializedHistory {
-      return {
-        version: 1,
-        messages: [...history],
-        exportedAt: Date.now(),
-      };
+      return historyManager.export();
     },
 
     importHistory(serialized: SerializedHistory): void {
-      if (serialized.version !== 1) {
-        throw new AgentError(
-          `Unsupported history version: ${serialized.version}`,
-          "TOOL_VALIDATION"
-        );
-      }
-      history = [...serialized.messages];
-      lastUpdated = Date.now();
-      log("debug", "History imported", { messageCount: history.length });
+      historyManager.import(serialized);
     },
   };
-}
-
-function wrapToolsWithCallbacks(
-  tools: Record<string, Tool>,
-  timings: Map<string, number>,
-  logger: Logger | undefined,
-  onToolCall?: (name: string, input: unknown) => void | Promise<void>,
-  onToolResult?: (name: string, result: unknown) => void | Promise<void>,
-  onError?: (
-    error: Error,
-    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
-  ) => void | Promise<void>
-): Record<string, Tool> {
-  const wrapped: Record<string, Tool> = {};
-
-  for (const [name, tool] of Object.entries(tools)) {
-    if (!tool.execute) {
-      wrapped[name] = tool;
-      continue;
-    }
-
-    const originalExecute = tool.execute;
-
-    wrapped[name] = {
-      ...tool,
-      execute: async (
-        args: Parameters<typeof originalExecute>[0],
-        execOptions: Parameters<typeof originalExecute>[1]
-      ) => {
-        const toolCallId = execOptions?.toolCallId ?? "";
-        const start = Date.now();
-
-        logger?.debug(`Tool call: ${name}`, { input: args });
-        await onToolCall?.(name, args);
-
-        try {
-          const result = await originalExecute(args, execOptions);
-          logger?.debug(`Tool result: ${name}`, { durationMs: Date.now() - start });
-          await onToolResult?.(name, result);
-
-          timings.set(toolCallId, Date.now() - start);
-          return result;
-        } catch (error) {
-          const errorObj = error instanceof Error ? error : new Error(String(error));
-          logger?.error(`Tool error: ${name}`, { error: errorObj.message });
-          await onError?.(errorObj, { phase: "tool", toolName: name });
-          throw error;
-        }
-      },
-    };
-  }
-
-  return wrapped;
 }
