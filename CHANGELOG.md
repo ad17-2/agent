@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1] - 2025-12-26
+
+### Changed
+
+- **Internal refactor**: Reorganized codebase into modular architecture with no functional changes.
+  - `src/agent/` - Agent factory, history manager, tool wrapper
+  - `src/message/` - Message building utilities
+  - `src/utils/` - Retry, timeout, and async utilities
+- **Tests relocated**: Moved from `src/*.test.ts` to `tests/` folder.
+
 ## [0.4.0] - 2025-12-26
 
 ### Breaking Changes
