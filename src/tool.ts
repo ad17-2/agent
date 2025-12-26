@@ -6,7 +6,6 @@ export interface ToolContext {
 }
 
 export interface ToolOptions<TInput extends z.ZodTypeAny> {
-  name: string;
   description: string;
   schema: TInput;
   handler: (input: z.infer<TInput>, context: ToolContext) => Promise<unknown>;
@@ -22,6 +21,7 @@ export function defineTool<TInput extends z.ZodTypeAny>(
   return aiTool({
     description,
     inputSchema: schema,
-    execute: async (input: z.infer<TInput>) => handler(input, {}),
+    execute: async (input: z.infer<TInput>, execOptions) =>
+      handler(input, { signal: execOptions?.abortSignal }),
   });
 }
