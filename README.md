@@ -20,7 +20,6 @@ Requires Node.js >= 18.
 import { createAgent, defineTool, anthropic, z } from "@ad17-2/agent";
 
 const weatherTool = defineTool({
-  name: "get_weather",
   description: "Get the current weather for a location",
   schema: z.object({
     location: z.string().describe("City name"),
@@ -116,7 +115,6 @@ Creates a tool definition for use with the agent.
 import { defineTool, z } from "@ad17-2/agent";
 
 const calculator = defineTool({
-  name: "calculate",
   description: "Perform arithmetic calculations",
   schema: z.object({
     expression: z.string().describe("Math expression to evaluate"),
@@ -131,7 +129,6 @@ const calculator = defineTool({
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `name` | `string` | Tool identifier |
 | `description` | `string` | Description shown to the LLM |
 | `schema` | `ZodType` | Zod schema for input validation |
 | `handler` | `(input, context) => Promise<unknown>` | Async function to execute the tool |

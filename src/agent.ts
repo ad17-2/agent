@@ -38,7 +38,8 @@ export function createAgent(options: AgentOptions): Agent {
   let history: Message[] = [];
   let lastUpdated = Date.now();
 
-  const wrappedTools = wrapToolsWithCallbacks(tools, onToolCall, onToolResult);
+  const toolTimings = new Map<string, number>();
+  const wrappedTools = wrapToolsWithCallbacks(tools, toolTimings, onToolCall, onToolResult);
 
   function getHistory(): Message[] {
     if (Date.now() - lastUpdated > ttlMs) {
@@ -84,7 +85,7 @@ export function createAgent(options: AgentOptions): Agent {
                   name: call.toolName,
                   input: call.input,
                   output: toolResult.output,
-                  durationMs: 0,
+                  durationMs: toolTimings.get(call.toolCallId) ?? 0,
                 });
               }
             }
@@ -137,13 +138,10 @@ export function createAgent(options: AgentOptions): Agent {
 
 function wrapToolsWithCallbacks(
   tools: Record<string, Tool>,
+  timings: Map<string, number>,
   onToolCall?: (name: string, input: unknown) => void,
   onToolResult?: (name: string, result: unknown) => void
 ): Record<string, Tool> {
-  if (!onToolCall && !onToolResult) {
-    return tools;
-  }
-
   const wrapped: Record<string, Tool> = {};
 
   for (const [name, tool] of Object.entries(tools)) {
@@ -160,9 +158,14 @@ function wrapToolsWithCallbacks(
         args: Parameters<typeof originalExecute>[0],
         execOptions: Parameters<typeof originalExecute>[1]
       ) => {
+        const toolCallId = execOptions?.toolCallId ?? "";
+        const start = Date.now();
+        
         onToolCall?.(name, args);
         const result = await originalExecute(args, execOptions);
         onToolResult?.(name, result);
+        
+        timings.set(toolCallId, Date.now() - start);
         return result;
       },
     };

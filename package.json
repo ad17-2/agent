@@ -1,6 +1,6 @@
 {
   "name": "@ad17-2/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Lightweight agentic loop for Claude powered by Vercel AI SDK",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,16 +17,19 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "ai": "6.0.3",
     "@ai-sdk/anthropic": "3.0.1",
+    "ai": "6.0.3",
     "zod": "4.2.1"
   },
   "devDependencies": {
     "tsup": "8.5.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.0.16"
   },
   "engines": {
     "node": ">=18"
