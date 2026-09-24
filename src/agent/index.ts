@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
 import { calculateBackoff, sleep } from "../utils/async.js";
+import { sumCost } from "../cost.js";
 import { toAgentEvent, toTokenUsage } from "./events.js";
 import { HistoryManager } from "./history.js";
 import { toStopReason, type SignalState } from "./stop-reason.js";
@@ -123,6 +124,7 @@ export function createAgent(options: AgentOptions): Agent {
     providerOptions: extraProviderOptions,
     retry: retryConfig,
     timeout: timeoutConfig,
+    pricing,
     logger,
     traceId: agentTraceId,
     onStart,
@@ -256,6 +258,7 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: result.steps.length,
           stopReason,
           usage,
+          cost: pricing ? sumCost(result.steps, pricing) : undefined,
           thinking: result.finalStep.reasoningText,
         };
 
@@ -398,6 +401,7 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: steps.length,
           stopReason,
           usage: finalUsage,
+          cost: pricing ? sumCost(steps, pricing) : undefined,
           thinking: reasoningText,
         };
 

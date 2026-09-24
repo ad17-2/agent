@@ -12,6 +12,7 @@ export {
   type StructuredResult,
 } from "./structured.js";
 export { AgentError, type AgentErrorCode } from "./errors.js";
+export { costOf, sumCost } from "./cost.js";
 
 export type {
   AgentOptions,
@@ -39,6 +40,9 @@ export type {
   BackoffStrategy,
   Logger,
   LogLevel,
+  ModelPrice,
+  PriceTable,
+  Cost,
 } from "./types.js";
 
 export { z } from "zod";

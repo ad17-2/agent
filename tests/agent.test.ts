@@ -57,6 +57,30 @@ describe("createAgent", () => {
     expect(result.usage.inputTokens).toBe(15);
     expect(result.usage.outputTokens).toBe(25);
     expect(result.usage.totalTokens).toBe(40);
+    expect(result.cost).toBeUndefined();
+  });
+
+  it("attaches cost only when pricing is set", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(1000, 500),
+      warnings: [],
+    }));
+
+    const agent = createAgent({
+      model,
+      systemPrompt: "You are helpful.",
+      tools: {},
+      pricing: { "mock-model-id": { inputPerMTok: 3, outputPerMTok: 15 } },
+    });
+    const result = await agent.run("Hello");
+
+    // 1000 / 1e6 * 3 = 0.003; 500 / 1e6 * 15 = 0.0075
+    expect(result.cost?.inputUsd).toBeCloseTo(0.003, 10);
+    expect(result.cost?.outputUsd).toBeCloseTo(0.0075, 10);
+    expect(result.cost?.totalUsd).toBeCloseTo(0.0105, 10);
+    expect(result.cost?.unpricedModels).toEqual([]);
   });
 
   it("reports max_tokens when finish reason is length", async () => {

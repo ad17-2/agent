@@ -112,6 +112,24 @@ export interface TokenUsage {
   reasoningTokens: number;
 }
 
+export interface ModelPrice {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  cacheWritePerMTok?: number;
+}
+
+export type PriceTable = Record<string, ModelPrice>;
+
+export interface Cost {
+  inputUsd: number;
+  outputUsd: number;
+  cacheReadUsd: number;
+  cacheWriteUsd: number;
+  totalUsd: number;
+  unpricedModels: string[];
+}
+
 export interface ToolCallRecord {
   name: string;
   input: unknown;
@@ -168,6 +186,7 @@ export interface AgentOptions extends AgentHooks {
   providerOptions?: ProviderOptions;
   retry?: RetryConfig;
   timeout?: TimeoutConfig;
+  pricing?: PriceTable;
   logger?: Logger;
   traceId?: string;
 }
@@ -195,6 +214,7 @@ export interface AgentResult {
   iterations: number;
   stopReason: StopReason;
   usage: TokenUsage;
+  cost?: Cost;
   thinking?: string;
 }
 
