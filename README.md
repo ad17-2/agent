@@ -591,7 +591,7 @@ console.log(result.data);
 // { sentiment: "positive", confidence: 0.95, summary: "..." }
 
 console.log(result.usage);
-// { inputTokens: 42, outputTokens: 18 }
+// { inputTokens: 42, outputTokens: 18, totalTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
 ```
 
 #### GenerateStructuredOptions
@@ -601,8 +601,8 @@ console.log(result.usage);
 | `model` | `LanguageModel` | Yes | Vercel AI SDK language model |
 | `schema` | `ZodType` | Yes | Zod schema defining output structure |
 | `prompt` | `string` | Yes | Text prompt for extraction |
-| `image` | `{ base64, mimeType }` | No | Optional image input |
-| `maxTokens` | `number` | No | Maximum output tokens |
+| `attachments` | `Attachment[]` | No | Images, PDFs or files, same shape as `RunOptions.attachments` |
+| `maxOutputTokens` | `number` | No | Maximum output tokens |
 | `abortSignal` | `AbortSignal` | No | Abort signal for cancellation |
 
 #### StructuredResult
@@ -610,7 +610,7 @@ console.log(result.usage);
 | Property | Type | Description |
 |----------|------|-------------|
 | `data` | `T` | Parsed data matching the schema |
-| `usage` | `{ inputTokens, outputTokens }` | Token usage statistics |
+| `usage` | `TokenUsage` | Token usage statistics |
 
 ---
 
