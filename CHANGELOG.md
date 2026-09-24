@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- The `step-complete` stream event always had an empty `toolsCalled`; it now carries the step's tool records, including failed calls.
+
 ## [0.5.0] - 2026-09-24
 
 ### Breaking Changes

@@ -650,6 +650,39 @@ describe("agent.stream events", () => {
     expect(steps[1]).toMatchObject({ stepIndex: 1, usage: { inputTokens: 3, outputTokens: 4 } });
   });
 
+  it("step-complete carries the step's own tool records, including a failed one", async () => {
+    const twoToolStep: LanguageModelV4StreamPart[] = [
+      { type: "stream-start", warnings: [] },
+      { type: "tool-call", toolCallId: "call-1", toolName: "echo", input: "{}" },
+      { type: "tool-call", toolCallId: "call-2", toolName: "boom", input: "{}" },
+      { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage: usage() },
+    ];
+    const agent = createAgent({
+      model: streamModel(twoToolStep, textStep),
+      systemPrompt: "Test",
+      tools: { echo, boom },
+    });
+
+    const events = await collect(agent.stream("go"));
+
+    const types = events.map((e) => e.type);
+    const step0 = types.indexOf("step-complete");
+    expect(step0).toBeGreaterThan(types.indexOf("tool-call-complete"));
+    expect(step0).toBeGreaterThan(types.indexOf("tool-call-error"));
+    expect(step0).toBeLessThan(types.indexOf("text-delta"));
+    expect(events[step0]).toMatchObject({
+      stepIndex: 0,
+      toolsCalled: [
+        { name: "echo", output: "echoed", error: undefined },
+        { name: "boom", output: undefined, error: true, errorMessage: "boom" },
+      ],
+    });
+    expect(events.filter((e) => e.type === "step-complete")[1]).toMatchObject({
+      stepIndex: 1,
+      toolsCalled: [],
+    });
+  });
+
   it("calls onStep for every step", async () => {
     const onStep = vi.fn();
     const agent = createAgent({

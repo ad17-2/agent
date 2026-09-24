@@ -400,7 +400,8 @@ export function createAgent(options: AgentOptions): Agent {
       const run = startRun(runOptions);
       const toolsCalled: ToolCallRecord[] = [];
       let stepIndex = 0;
-      let stepToolsCalled: ToolCallRecord[] = [];
+      const recordsByStep: ToolCallRecord[][] = [];
+      let wake: (() => void) | undefined;
 
       // Every yield sits inside this try, so a consumer that stops after any event reaches the finally.
       try {
@@ -424,11 +425,39 @@ export function createAgent(options: AgentOptions): Agent {
           messages,
           abortSignal: run.signal,
           onStepEnd: async (step) => {
-            stepToolsCalled = buildToolCallRecords(step, toolTimings);
-            toolsCalled.push(...stepToolsCalled);
-            await onStep?.({ stepIndex, toolsCalled: stepToolsCalled, textGenerated: step.text });
+            const stepTools = buildToolCallRecords(step, toolTimings);
+            toolsCalled.push(...stepTools);
+            await onStep?.({
+              stepIndex: step.stepNumber,
+              toolsCalled: stepTools,
+              textGenerated: step.text,
+            });
+            recordsByStep[step.stepNumber] = stepTools;
+            wake?.();
           },
         });
+        const streamEnded = streamResult.steps.then(
+          () => true,
+          () => true
+        );
+        /**
+         * The SDK enqueues `finish-step` before it runs `onStepEnd`, so this step's records may not
+         * exist yet when the part arrives. Waits for them; gives up once the stream has settled.
+         */
+        const stepRecords = async (index: number): Promise<ToolCallRecord[]> => {
+          let records = recordsByStep[index];
+          while (!records) {
+            const ended = await Promise.race([
+              new Promise<boolean>((resolve) => {
+                wake = () => resolve(false);
+              }),
+              streamEnded,
+            ]);
+            records = recordsByStep[index];
+            if (ended) return records ?? [];
+          }
+          return records;
+        };
 
         for await (const part of streamResult.fullStream) {
           // An SDK error part or abort part after a signal fired is that signal, not an API error.
@@ -440,13 +469,11 @@ export function createAgent(options: AgentOptions): Agent {
             return agentResult;
           }
 
-          const evt = toAgentEvent(part, toolTimings, stepIndex, stepToolsCalled);
+          const stepTools = part.type === "finish-step" ? await stepRecords(stepIndex) : [];
+          const evt = toAgentEvent(part, toolTimings, stepIndex, stepTools);
           if (evt) yield evt;
 
-          if (part.type === "finish-step") {
-            stepIndex++;
-            stepToolsCalled = [];
-          }
+          if (part.type === "finish-step") stepIndex++;
 
           if (evt?.type === "error") {
             const agentResult: AgentResult = {
