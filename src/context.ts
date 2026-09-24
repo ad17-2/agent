@@ -7,6 +7,7 @@ import {
   type PrepareStepFunction,
   type ToolSet,
 } from "ai";
+import { splitTurns } from "./agent/history.js";
 import type { ContextConfig, Message } from "./types.js";
 
 const DEFAULT_CHARS_PER_TOKEN = 4;
@@ -60,19 +61,6 @@ export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
   };
 }
 
-/** Splits history into turns, each starting at a user message, so a tool call is never separated from its result. */
-function splitTurns(history: Message[]): Message[][] {
-  const turns: Message[][] = [];
-  for (const msg of history) {
-    if (msg.role === "user" || turns.length === 0) {
-      turns.push([msg]);
-    } else {
-      turns[turns.length - 1]!.push(msg);
-    }
-  }
-  return turns;
-}
-
 function zeroUsage(): LanguageModelUsage {
   return {
     inputTokens: 0,
@@ -90,8 +78,8 @@ export interface SummarizeResult {
 
 /**
  * Run between turns, before a run whose history exceeds the budget. Summarizes every turn except
- * the most recent `keepRecentTurns` into one assistant message via `generateText`, cutting only at
- * turn boundaries. Returns the summary's usage so the caller can fold it into the run's own usage/cost.
+ * the most recent `keepRecentTurns` into one leading user message via `generateText`, cutting only
+ * at turn boundaries. Returns the summary's usage so the caller can fold it into the run's own usage/cost.
  */
 export async function summarizeHistory(
   history: Message[],
@@ -118,8 +106,8 @@ export async function summarizeHistory(
   });
 
   const summaryMessage: Message = {
-    role: "assistant",
-    content: result.text,
+    role: "user",
+    content: `Summary of earlier conversation: ${result.text}`,
     timestamp: Date.now(),
   };
 

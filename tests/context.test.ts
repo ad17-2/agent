@@ -125,8 +125,8 @@ describe("summarizeHistory", () => {
     // 1 summary message + last 2 turns (6 messages)
     expect(result.messages).toHaveLength(7);
     expect(result.messages[0]).toMatchObject({
-      role: "assistant",
-      content: "earlier turns summarized",
+      role: "user",
+      content: "Summary of earlier conversation: earlier turns summarized",
     });
     expect(result.usage.inputTokens).toBe(10);
 
