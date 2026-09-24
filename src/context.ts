@@ -36,31 +36,40 @@ export function estimateTokens(
 }
 
 /**
- * prepareStep hook: once the calibrated estimate for the step's messages exceeds `maxInputTokens`,
- * prunes reasoning and tool call/result content from everything but the last message via the SDK's
- * `pruneMessages`. Calibrates its chars/token ratio from the previous step's real usage.inputTokens.
+ * prepareStep hook. Once the calibrated estimate for the step's messages exceeds `maxInputTokens`,
+ * prunes reasoning and tool call/result content from the history that precedes this run's user
+ * message; the run's own messages are never touched (Anthropic needs thinking blocks for tool use
+ * returned unchanged). The chars/token ratio is calibrated from the previous step's own prompt
+ * chars and measured usage.inputTokens, and reset at step 0 of every run. Instructions and tool
+ * schemas are not in the char count, so the ratio lands on the conservative side.
  */
 export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
   let charsPerToken = DEFAULT_CHARS_PER_TOKEN;
+  let lastPromptChars = 0;
 
-  return ({ messages, steps }) => {
+  return ({ messages, steps, stepNumber, responseMessages }) => {
+    if (stepNumber === 0) charsPerToken = DEFAULT_CHARS_PER_TOKEN;
     const lastStep = steps[steps.length - 1];
-    if (lastStep?.usage.inputTokens) {
-      const chars = charsOf(messages);
-      if (chars > 0) charsPerToken = chars / lastStep.usage.inputTokens;
+    if (lastStep?.usage.inputTokens && lastPromptChars > 0) {
+      charsPerToken = lastPromptChars / lastStep.usage.inputTokens;
     }
 
     if (estimateTokens(messages, charsPerToken) <= cfg.maxInputTokens) {
+      lastPromptChars = charsOf(messages);
       return {};
     }
 
-    return {
-      messages: pruneMessages({
-        messages,
-        reasoning: "before-last-message",
-        toolCalls: "before-last-message",
+    const historyCount = messages.length - 1 - responseMessages.length;
+    const trimmed = [
+      ...pruneMessages({
+        messages: messages.slice(0, historyCount),
+        reasoning: "all",
+        toolCalls: "all",
       }),
-    };
+      ...messages.slice(historyCount),
+    ];
+    lastPromptChars = charsOf(trimmed);
+    return { messages: trimmed };
   };
 }
 

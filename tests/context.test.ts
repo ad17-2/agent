@@ -64,10 +64,14 @@ describe("estimateTokens", () => {
   });
 });
 
+type PrepareStepOptions = Parameters<ReturnType<typeof trimForStep>>[0];
+type ResponseMessages = PrepareStepOptions["responseMessages"];
+
 function prepareStepOptions(
   messages: ModelMessage[],
-  stepNumber: number
-): Parameters<ReturnType<typeof trimForStep>>[0] {
+  stepNumber: number,
+  overrides: Partial<PrepareStepOptions> = {}
+): PrepareStepOptions {
   return {
     messages,
     steps: [],
@@ -79,7 +83,13 @@ function prepareStepOptions(
     responseMessages: [],
     toolsContext: {},
     runtimeContext: {},
+    ...overrides,
   };
+}
+
+/** A completed step whose only field trimForStep reads is usage.inputTokens. */
+function stepWithInputTokens(inputTokens: number): PrepareStepOptions["steps"][number] {
+  return { usage: { inputTokens } } as unknown as PrepareStepOptions["steps"][number];
 }
 
 describe("trimForStep", () => {
@@ -102,6 +112,125 @@ describe("trimForStep", () => {
 
     expect(result?.messages).toBeDefined();
     expect(JSON.stringify(result?.messages)).not.toEqual(JSON.stringify(messages));
+  });
+
+  it("calibrates chars/token from the previous step's own prompt and measured inputTokens", async () => {
+    // step 0's prompt is ~420 chars and the model measured 420 tokens for it (1 char/token).
+    // step 1 adds a 2000-char response. Calibrated: ~2420 tokens > 1000 budget, so prune.
+    // Dividing step 1's chars by step 0's tokens (the old bug) gives ~5.8 chars/token and
+    // ~420 tokens, and the raw chars/4 default gives ~605: both stay under budget.
+    const cfg: ContextConfig = { maxInputTokens: 1000 };
+    const prepareStep = trimForStep(cfg);
+    const history: ModelMessage[] = [
+      { role: "user", content: "a".repeat(300) },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "c0", toolName: "lookup", input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c0",
+            toolName: "lookup",
+            output: { type: "text", value: "b".repeat(20) },
+          },
+        ],
+      },
+    ];
+    const initialMessages = [...history, { role: "user", content: "now" } as const];
+    const responseMessages: ResponseMessages = [{ role: "assistant", content: "r".repeat(2000) }];
+
+    const step0 = await prepareStep(
+      prepareStepOptions(initialMessages, 0, { initialMessages, responseMessages: [] })
+    );
+    expect(step0).toEqual({});
+
+    const step1 = await prepareStep(
+      prepareStepOptions([...initialMessages, ...responseMessages], 1, {
+        initialMessages,
+        responseMessages,
+        steps: [stepWithInputTokens(420)],
+      })
+    );
+    expect(step1?.messages).toBeDefined();
+    expect(JSON.stringify(step1?.messages)).not.toContain("tool-call");
+  });
+
+  it("resets calibration per run", async () => {
+    const cfg: ContextConfig = { maxInputTokens: 150 };
+    const prepareStep = trimForStep(cfg);
+    const messages: ModelMessage[] = [
+      { role: "user", content: "a".repeat(300) },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "c0", toolName: "lookup", input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c0",
+            toolName: "lookup",
+            output: { type: "text", value: "b" },
+          },
+        ],
+      },
+      { role: "user", content: "now" },
+    ];
+
+    await prepareStep(prepareStepOptions(messages, 0));
+    const pruned = await prepareStep(
+      prepareStepOptions(messages, 1, { steps: [stepWithInputTokens(400)] })
+    );
+    expect(pruned?.messages).toBeDefined();
+
+    // a fresh run (stepNumber 0) must start from the default ratio again: under budget, no pruning
+    const fresh = await prepareStep(prepareStepOptions(messages, 0));
+    expect(fresh).toEqual({});
+  });
+
+  it("never touches the current run's messages, only history before this run's user message", async () => {
+    const cfg: ContextConfig = { maxInputTokens: 1 };
+    const prepareStep = trimForStep(cfg);
+    const history = buildTurns(2) as ModelMessage[];
+    const runUser: ModelMessage = { role: "user", content: "current question" };
+    const runResponses: ResponseMessages = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking about it" },
+          { type: "tool-call", toolCallId: "run-1", toolName: "lookup", input: { q: 1 } },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "run-1",
+            toolName: "lookup",
+            output: { type: "text", value: "run result" },
+          },
+        ],
+      },
+    ];
+    const initialMessages = [...history, runUser];
+    const messages = [...initialMessages, ...runResponses];
+
+    const result = await prepareStep(
+      prepareStepOptions(messages, 1, {
+        initialMessages,
+        responseMessages: runResponses,
+      })
+    );
+
+    expect(result?.messages).toBeDefined();
+    const kept = result?.messages ?? [];
+    expect(kept.slice(-3)).toEqual([runUser, ...runResponses]);
+    expect(JSON.stringify(kept.slice(0, -3))).not.toContain("tool-call");
   });
 });
 
