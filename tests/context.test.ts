@@ -3,18 +3,7 @@ import { MockLanguageModelV4 } from "ai/test";
 import type { ModelMessage } from "ai";
 import { estimateTokens, trimForStep, summarizeHistory } from "../src/context.js";
 import type { ContextConfig, Message } from "../src/types.js";
-
-function usage(inputTokens = 10, outputTokens = 5) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 function summarizeModel(text = "summary of earlier turns") {
   return new MockLanguageModelV4({

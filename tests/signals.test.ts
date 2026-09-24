@@ -5,18 +5,7 @@ import { defineTool } from "../src/tool.js";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import type { AgentEvent } from "../src/types.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { collect, usage } from "./helpers.js";
 
 /** Behaves like a real HTTP call: never resolves on its own, rejects with the signal's reason once aborted. */
 function hangingModel() {
@@ -49,12 +38,6 @@ function tickingStreamModel(counters: { pulls: number }) {
       }),
     }),
   });
-}
-
-async function collect(events: AsyncIterable<AgentEvent>) {
-  const out: AgentEvent[] = [];
-  for await (const event of events) out.push(event);
-  return out;
 }
 
 describe("in-flight abort and timeout", () => {

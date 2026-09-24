@@ -6,6 +6,7 @@ import type { MCPTransport } from "@ai-sdk/mcp";
 import { loadMcpTools } from "../src/mcp.js";
 import { createAgent } from "../src/agent/index.js";
 import { AgentError } from "../src/errors.js";
+import { usage } from "./helpers.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/mcp-server.mjs", import.meta.url));
 
@@ -17,18 +18,6 @@ function echoServer(name: string, prefix?: string, toolNames: string[] = []) {
       args: [fixturePath, ...toolNames],
     }),
     prefix,
-  };
-}
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }
 

@@ -2,18 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { MockLanguageModelV4 } from "ai/test";
 import { generateStructured } from "../src/structured.js";
-
-function usage(inputTokens = 50, outputTokens = 25) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 describe("generateStructured", () => {
   it("returns parsed data matching schema", async () => {

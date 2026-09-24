@@ -8,18 +8,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { createAgent } from "../src/agent/index.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 describe("telemetry", () => {
   it("forwards telemetry to the SDK and exports real ai.* spans", async () => {

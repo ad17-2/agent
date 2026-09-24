@@ -6,19 +6,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
-import type { AgentEvent } from "../src/types.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { collect, usage } from "./helpers.js";
 
 function apiError(statusCode: number) {
   return new APICallError({
@@ -37,12 +25,6 @@ const textChunks: LanguageModelV4StreamPart[] = [
   { type: "text-end", id: "1" },
   { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage() },
 ];
-
-async function collect(events: AsyncIterable<AgentEvent>) {
-  const out: AgentEvent[] = [];
-  for await (const event of events) out.push(event);
-  return out;
-}
 
 describe("retry is per model call", () => {
   it("runs a tool exactly once when step 2 fails transiently, and counts only successful usage", async () => {

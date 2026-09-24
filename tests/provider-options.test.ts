@@ -2,18 +2,7 @@ import { describe, it, expect } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAgent } from "../src/agent/index.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 describe("providerOptions", () => {
   it("deep-merges caller providerOptions with thinking under the same provider key", async () => {

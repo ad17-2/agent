@@ -3,6 +3,7 @@ import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
+import { usage } from "./helpers.js";
 
 // Regression tests for bugs 1 and 2 from docs/design.md (multimodal history loss,
 // wrong stop reasons). Unmodified from the pre-upgrade commit except for the
@@ -10,18 +11,6 @@ import { defineTool } from "../src/tool.js";
 
 const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-
-function usage(inputTokens: number, outputTokens: number) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
 
 describe("regressions (fixed by the ai 7 rebuild)", () => {
   it("a) turn 2's prompt still carries turn 1's image and text", async () => {

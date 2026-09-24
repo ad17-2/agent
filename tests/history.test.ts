@@ -6,18 +6,7 @@ import { createAgent } from "../src/agent/index.js";
 import { HistoryManager } from "../src/agent/history.js";
 import { defineTool } from "../src/tool.js";
 import type { Message, SerializedHistoryV1 } from "../src/types.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 /** One tool-calling run: [user, assistant(tool-call), tool(result), assistant(text)]. */
 function toolCallingModel() {
