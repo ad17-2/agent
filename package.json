@@ -29,6 +29,7 @@
     "format": "biome format --write src tests examples",
     "format:check": "biome format src tests examples",
     "example:telemetry": "pnpm build && node examples/telemetry-console.ts",
+    "check:package": "bash scripts/check-package.sh",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -48,6 +49,7 @@
     "@ai-sdk/mcp": "2.0.57",
     "@ai-sdk/otel": "1.0.113",
     "@ai-sdk/provider": "4.0.18",
+    "@arethetypeswrong/cli": "0.18.5",
     "@biomejs/biome": "2.5.14",
     "@langfuse/otel": "5.11.1",
     "@langfuse/vercel-ai-sdk": "5.11.1",
@@ -58,6 +60,7 @@
     "@types/node": "^26.6.2",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2002",
+    "publint": "0.3.24",
     "tsdown": "0.23.0",
     "typescript": "7.0.2",
     "vitest": "^5.0.1"
