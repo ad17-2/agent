@@ -41,13 +41,13 @@ export async function generateStructured<T extends z.ZodType>(
   const result = await generateText({
     model,
     messages,
-    output: Output.object({ schema }),
+    output: Output.object<z.infer<T>>({ schema }),
     maxOutputTokens: maxTokens,
     abortSignal: signal,
   });
 
   return {
-    data: result.output as z.infer<T>,
+    data: result.output,
     usage: {
       inputTokens: result.usage.inputTokens ?? 0,
       outputTokens: result.usage.outputTokens ?? 0,
