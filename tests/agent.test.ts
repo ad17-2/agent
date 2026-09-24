@@ -683,6 +683,35 @@ describe("agent.stream events", () => {
     });
   });
 
+  it("measures each run's tool durations on their own, even when tool call ids repeat", async () => {
+    let calls = 0;
+    const sometimesSlow = defineTool({
+      description: "Slow on the first call only",
+      schema: z.object({}),
+      handler: async () => {
+        if (calls++ === 0) await new Promise((r) => setTimeout(r, 40));
+        return "ok";
+      },
+    });
+    const agent = createAgent({
+      model: streamModel(toolStep("sometimesSlow"), textStep, toolStep("sometimesSlow"), textStep),
+      systemPrompt: "Test",
+      tools: { sometimesSlow },
+    });
+
+    const first = await collect(agent.stream("one"));
+    const second = await collect(agent.stream("two"));
+
+    const durationOf = (events: typeof first) =>
+      (events.find((e) => e.type === "tool-call-complete") as { durationMs: number }).durationMs;
+    const recordOf = (events: typeof first) =>
+      (events.at(-1) as { result: AgentResult }).result.toolsCalled[0]!.durationMs;
+    expect(durationOf(first)).toBeGreaterThanOrEqual(40);
+    expect(recordOf(first)).toBeGreaterThanOrEqual(40);
+    expect(durationOf(second)).toBeLessThan(40);
+    expect(recordOf(second)).toBeLessThan(40);
+  });
+
   it("calls onStep for every step", async () => {
     const onStep = vi.fn();
     const agent = createAgent({

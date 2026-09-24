@@ -16,7 +16,6 @@ type ExecuteOptions = Parameters<ExecuteFn>[1];
 /** The only tool wrapper in the codebase: enforces the timeout, runs hooks, and tracks call duration. */
 export function wrapToolsWithCallbacks(
   tools: ToolSet,
-  timings: Map<string, number>,
   logger: Logger | undefined,
   callbacks: ToolCallbacks,
   timeoutConfig?: TimeoutConfig
@@ -38,7 +37,6 @@ export function wrapToolsWithCallbacks(
     wrapped[name] = {
       ...tool,
       execute: async (args: unknown, execOptions: ExecuteOptions) => {
-        const toolCallId = execOptions?.toolCallId ?? "";
         const start = Date.now();
 
         logger?.debug(`Tool call: ${name}`, { input: args });
@@ -74,12 +72,9 @@ export function wrapToolsWithCallbacks(
           const result = await resultPromise;
           logger?.debug(`Tool result: ${name}`, { durationMs: Date.now() - start });
           await onToolResult?.(name, result);
-
-          timings.set(toolCallId, Date.now() - start);
           return result;
         } catch (error) {
           const errorObj = error instanceof Error ? error : new Error(String(error));
-          timings.set(toolCallId, Date.now() - start);
           // Cut off by the run's own signal (timeout or abort): the run reports that once, not the tool.
           // A tool that fails with its own error at the same moment is still reported.
           const runSignal = execOptions?.abortSignal;

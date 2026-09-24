@@ -22,7 +22,7 @@ describe("wrapToolsWithCallbacks", () => {
       timeoutMs: 20,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ cooperative }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ cooperative }, undefined, {});
 
     await expect(wrapped.cooperative!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
@@ -45,7 +45,7 @@ describe("wrapToolsWithCallbacks", () => {
       timeoutMs: 20,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ uncooperative }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ uncooperative }, undefined, {});
 
     await expect(wrapped.uncooperative!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
@@ -67,13 +67,7 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks(
-      { slow },
-      new Map(),
-      undefined,
-      {},
-      { toolTimeoutMs: 20 }
-    );
+    const wrapped = wrapToolsWithCallbacks({ slow }, undefined, {}, { toolTimeoutMs: 20 });
 
     await expect(wrapped.slow!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
@@ -94,38 +88,30 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ fast }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ fast }, undefined, {});
 
     await wrapped.fast!.execute!({}, executeOptions("t1"));
 
     expect(sawAbort).toBe(false);
   });
 
-  it("records call duration and invokes onToolCall/onToolResult", async () => {
+  it("invokes onToolCall and onToolResult around the handler", async () => {
     const onToolCall = vi.fn();
     const onToolResult = vi.fn();
-    const timings = new Map<string, number>();
 
     const greet = defineTool({
       description: "Greet",
       schema: z.object({ name: z.string() }),
-      handler: async ({ name }) => {
-        await new Promise((r) => setTimeout(r, 5));
-        return `Hello, ${name}!`;
-      },
+      handler: async ({ name }) => `Hello, ${name}!`,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ greet }, timings, undefined, {
-      onToolCall,
-      onToolResult,
-    });
+    const wrapped = wrapToolsWithCallbacks({ greet }, undefined, { onToolCall, onToolResult });
 
     const result = await wrapped.greet!.execute!({ name: "World" }, executeOptions("call-1"));
 
     expect(result).toBe("Hello, World!");
     expect(onToolCall).toHaveBeenCalledWith("greet", { name: "World" });
     expect(onToolResult).toHaveBeenCalledWith("greet", "Hello, World!");
-    expect(timings.get("call-1")).toBeGreaterThan(0);
   });
 
   it("still reports a tool's own error when the run signal fires at the same moment", async () => {
@@ -140,7 +126,7 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ buggy }, new Map(), undefined, { onError });
+    const wrapped = wrapToolsWithCallbacks({ buggy }, undefined, { onError });
 
     await expect(
       wrapped.buggy!.execute!({}, executeOptions("t1", controller.signal))

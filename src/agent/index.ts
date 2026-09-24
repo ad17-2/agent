@@ -69,10 +69,7 @@ function zeroUsage(): TokenUsage {
   };
 }
 
-function buildToolCallRecords(
-  step: StepResult<ToolSet>,
-  toolTimings: ReadonlyMap<string, number>
-): ToolCallRecord[] {
+function buildToolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
   const errorsById = new Map(
     step.content
       .filter(
@@ -90,7 +87,7 @@ function buildToolCallRecords(
       name: call.toolName,
       input: call.input,
       output: result?.output,
-      durationMs: toolTimings.get(call.toolCallId) ?? 0,
+      durationMs: step.performance.toolExecutionMs[call.toolCallId] ?? 0,
       error: errorPart ? true : undefined,
       errorMessage: errorPart
         ? errorPart.error instanceof Error
@@ -175,10 +172,8 @@ export function createAgent(options: AgentOptions): Agent {
     (msg) => log("debug", msg)
   );
 
-  const toolTimings = new Map<string, number>();
   const wrappedTools = wrapToolsWithCallbacks(
     tools,
-    toolTimings,
     logger,
     { onToolCall, onToolResult, onError },
     timeoutConfig
@@ -328,7 +323,7 @@ export function createAgent(options: AgentOptions): Agent {
           messages,
           abortSignal: run.signal,
           onStepEnd: async (step) => {
-            const stepTools = buildToolCallRecords(step, toolTimings);
+            const stepTools = buildToolCallRecords(step);
             toolsCalled.push(...stepTools);
             await onStep?.({ stepIndex, toolsCalled: stepTools, textGenerated: step.text });
             stepIndex++;
@@ -402,6 +397,8 @@ export function createAgent(options: AgentOptions): Agent {
       let stepIndex = 0;
       const recordsByStep: ToolCallRecord[][] = [];
       let wake: (() => void) | undefined;
+      // Filled by onToolExecutionEnd, which the SDK awaits before it enqueues the tool-result part.
+      const toolTimings = new Map<string, number>();
 
       // Every yield sits inside this try, so a consumer that stops after any event reaches the finally.
       try {
@@ -424,8 +421,11 @@ export function createAgent(options: AgentOptions): Agent {
         const streamResult = await sdkAgent.stream({
           messages,
           abortSignal: run.signal,
+          onToolExecutionEnd: ({ toolCall, toolExecutionMs }) => {
+            toolTimings.set(toolCall.toolCallId, toolExecutionMs);
+          },
           onStepEnd: async (step) => {
-            const stepTools = buildToolCallRecords(step, toolTimings);
+            const stepTools = buildToolCallRecords(step);
             toolsCalled.push(...stepTools);
             await onStep?.({
               stepIndex: step.stepNumber,
