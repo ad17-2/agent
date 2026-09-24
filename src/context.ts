@@ -123,7 +123,8 @@ export interface SummarizeResult {
 export async function summarizeHistory(
   history: Message[],
   cfg: ContextConfig,
-  model: LanguageModel
+  model: LanguageModel,
+  options: { abortSignal?: AbortSignal } = {}
 ): Promise<SummarizeResult> {
   const keepRecentTurns = cfg.summarize?.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS;
   const summarizeModel = cfg.summarize?.model ?? model;
@@ -140,8 +141,9 @@ export async function summarizeHistory(
 
   const result = await generateText({
     model: summarizeModel,
-    system: instructions,
+    instructions,
     prompt: JSON.stringify(oldMessages.map(forSummaryPrompt)),
+    abortSignal: options.abortSignal,
   });
 
   const summaryMessage: Message = {

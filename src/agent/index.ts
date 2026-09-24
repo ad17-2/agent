@@ -212,13 +212,17 @@ export function createAgent(options: AgentOptions): Agent {
   });
 
   /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
-  async function summarizeIfOverBudget(): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
+  async function summarizeIfOverBudget(
+    abortSignal: AbortSignal
+  ): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
     if (!contextConfig || estimateTokens(historyManager.get()) <= contextConfig.maxInputTokens) {
       return { extraUsage: zeroUsage() };
     }
 
     const summarizeModel = contextConfig.summarize?.model ?? model;
-    const { messages, usage } = await summarizeHistory(historyManager.get(), contextConfig, model);
+    const { messages, usage } = await summarizeHistory(historyManager.get(), contextConfig, model, {
+      abortSignal,
+    });
     historyManager.save(messages);
 
     log("info", "History summarized", {
@@ -292,7 +296,7 @@ export function createAgent(options: AgentOptions): Agent {
 
         await onStart?.(input);
 
-        const { extraUsage, extraCost } = await summarizeIfOverBudget();
+        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
 
         const userMessage = buildUserMessage(input, attachments);
         const messages: Message[] = [...historyManager.get(), userMessage];
@@ -387,7 +391,7 @@ export function createAgent(options: AgentOptions): Agent {
 
         await onStart?.(input);
 
-        const { extraUsage, extraCost } = await summarizeIfOverBudget();
+        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
 
         const userMessage = buildUserMessage(input, attachments);
         const messages: Message[] = [...historyManager.get(), userMessage];

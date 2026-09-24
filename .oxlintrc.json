@@ -10,11 +10,12 @@
   "rules": {
     "no-console": "warn",
     "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
-    "typescript/no-explicit-any": "warn",
+    "typescript/no-explicit-any": "error",
     "typescript/consistent-type-imports": ["error", { "prefer": "type-imports" }],
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error"
   },
+  "overrides": [{ "files": ["examples/**"], "rules": { "no-console": "off" } }],
   "ignorePatterns": ["dist/**", "node_modules/**", "*.config.js", "*.config.ts"]
 }

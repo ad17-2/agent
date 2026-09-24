@@ -304,3 +304,15 @@ describe("summarizeHistory attachments", () => {
     expect(prompt).toContain("what is in these?");
   });
 });
+
+describe("summarizeHistory abort", () => {
+  it("passes the caller's abort signal to the summariser call", async () => {
+    const model = summarizeModel();
+    const controller = new AbortController();
+    const cfg: ContextConfig = { maxInputTokens: 1, summarize: { keepRecentTurns: 1 } };
+
+    await summarizeHistory(buildTurns(3), cfg, model, { abortSignal: controller.signal });
+
+    expect(model.doGenerateCalls[0]!.abortSignal).toBe(controller.signal);
+  });
+});
