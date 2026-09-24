@@ -1,4 +1,12 @@
-import { ToolLoopAgent, stepCountIs, type StepResult, type TextStreamPart, type ToolSet } from "ai";
+import {
+  ToolLoopAgent,
+  gateway,
+  stepCountIs,
+  wrapLanguageModel,
+  type LanguageModel,
+  type StepResult,
+  type ToolSet,
+} from "ai";
 import { AgentError } from "../errors.js";
 import { buildUserMessage } from "../message.js";
 import type {
@@ -14,13 +22,12 @@ import type {
   TokenUsage,
   ToolCallRecord,
 } from "../types.js";
-import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
-import { calculateBackoff, sleep } from "../utils/async.js";
+import { createRunSignal, retryMiddleware, type RetryOptions } from "../utils/index.js";
 import { sumCost } from "../cost.js";
 import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
 import { toAgentEvent, toTokenUsage } from "./events.js";
 import { HistoryManager } from "./history.js";
-import { toStopReason, type SignalState } from "./stop-reason.js";
+import { toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -88,44 +95,24 @@ function buildToolCallRecords(
   });
 }
 
-/** Drives a stream, retrying the underlying call only if it fails before the first part is yielded. */
-async function* driveStream<T extends { fullStream: AsyncIterable<TextStreamPart<ToolSet>> }>(
-  mkStream: () => Promise<T>,
-  retryOptions: RetryOptions
-): AsyncGenerator<TextStreamPart<ToolSet>, T, undefined> {
-  let firstYielded = false;
+/** String model ids resolve like the SDK does: through the global default provider, else the gateway. */
+function resolveModel(model: LanguageModel) {
+  return typeof model === "string"
+    ? (globalThis.AI_SDK_DEFAULT_PROVIDER ?? gateway).languageModel(model)
+    : model;
+}
 
-  for (let attempt = 1; ; attempt++) {
-    const streamResult = await mkStream();
-    try {
-      for await (const part of streamResult.fullStream) {
-        firstYielded = true;
-        yield part;
-      }
-      return streamResult;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      if (firstYielded || attempt >= retryOptions.maxAttempts || !retryOptions.retryOn(err)) {
-        throw err;
-      }
-      retryOptions.logger?.(`Stream attempt ${attempt} failed before first event, retrying`, {
-        error: err.message,
-      });
-      await sleep(
-        calculateBackoff(
-          attempt,
-          retryOptions.backoff,
-          retryOptions.initialDelayMs,
-          retryOptions.maxDelayMs
-        )
-      );
-    }
-  }
+function signalResult(
+  stopReason: "aborted" | "timeout",
+  toolsCalled: ToolCallRecord[],
+  iterations: number
+): AgentResult {
+  return { message: "", toolsCalled, iterations, stopReason, usage: zeroUsage() };
 }
 
 export function createAgent(options: AgentOptions): Agent {
   const {
-    model,
+    model: modelOption,
     systemPrompt,
     tools,
     maxIterations = DEFAULT_MAX_ITERATIONS,
@@ -179,6 +166,10 @@ export function createAgent(options: AgentOptions): Agent {
     ...retry,
     logger: (msg, meta) => log("warn", msg, meta),
   };
+  const model = wrapLanguageModel({
+    model: resolveModel(modelOption),
+    middleware: retryMiddleware(retryOptions),
+  });
 
   const thinkingProviderOptions = thinking?.enabled
     ? {
@@ -257,20 +248,21 @@ export function createAgent(options: AgentOptions): Agent {
     };
   }
 
-  function resolveSignal(runOptions: RunOptions | undefined) {
-    const { signal: userSignal, timeoutMs } = runOptions ?? {};
-    const effectiveTimeout = timeoutMs ?? timeoutConfig?.runTimeoutMs;
-    const signal = effectiveTimeout
-      ? createTimeoutSignal(effectiveTimeout, userSignal)
-      : userSignal;
-    return signal;
+  function startRun(runOptions: RunOptions | undefined) {
+    return createRunSignal(
+      runOptions?.timeoutMs ?? timeoutConfig?.runTimeoutMs,
+      runOptions?.signal
+    );
   }
 
-  function classifySignalFailure(signal: AbortSignal | undefined, error: unknown): SignalState {
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-    if (errorObj.message.includes("timed out")) return "timeout";
-    if (signal?.aborted) return "aborted";
-    return undefined;
+  /** Logs a signal-ended run; a timeout is an error the caller hears about, an abort is not. */
+  async function reportSignal(state: "aborted" | "timeout", reason: unknown, kind: string) {
+    log(state === "timeout" ? "error" : "warn", `Agent ${kind} ${state}`);
+    if (state === "timeout") {
+      await onError?.(reason instanceof Error ? reason : new Error(String(reason)), {
+        phase: "timeout",
+      });
+    }
   }
 
   return {
@@ -280,43 +272,31 @@ export function createAgent(options: AgentOptions): Agent {
 
       log("info", "Agent run started", { input: input.slice(0, 100), traceId: effectiveTraceId });
 
-      const signal = resolveSignal(runOptions);
-
-      if (signal?.aborted) {
-        return {
-          message: "",
-          toolsCalled: [],
-          iterations: 0,
-          stopReason: "aborted",
-          usage: zeroUsage(),
-        };
-      }
-
-      await onStart?.(input);
-
-      const { extraUsage, extraCost } = await summarizeIfOverBudget();
-
-      const userMessage = buildUserMessage(input, attachments);
-      const messages: Message[] = [...historyManager.get(), userMessage];
+      const run = startRun(runOptions);
       const toolsCalled: ToolCallRecord[] = [];
       let stepIndex = 0;
 
       try {
-        const result = await executeWithRetry(
-          () =>
-            sdkAgent.generate({
-              messages,
-              abortSignal: signal,
-              onStepEnd: async (step) => {
-                const stepTools = buildToolCallRecords(step, toolTimings);
-                toolsCalled.push(...stepTools);
-                await onStep?.({ stepIndex, toolsCalled: stepTools, textGenerated: step.text });
-                stepIndex++;
-              },
-            }),
-          retryOptions,
-          signal
-        );
+        const initialState = run.state();
+        if (initialState) return signalResult(initialState, toolsCalled, stepIndex);
+
+        await onStart?.(input);
+
+        const { extraUsage, extraCost } = await summarizeIfOverBudget();
+
+        const userMessage = buildUserMessage(input, attachments);
+        const messages: Message[] = [...historyManager.get(), userMessage];
+
+        const result = await sdkAgent.generate({
+          messages,
+          abortSignal: run.signal,
+          onStepEnd: async (step) => {
+            const stepTools = buildToolCallRecords(step, toolTimings);
+            toolsCalled.push(...stepTools);
+            await onStep?.({ stepIndex, toolsCalled: stepTools, textGenerated: step.text });
+            stepIndex++;
+          },
+        });
 
         const usage = addUsage(toTokenUsage(result.usage), extraUsage);
         const stopReason = toStopReason(
@@ -343,22 +323,10 @@ export function createAgent(options: AgentOptions): Agent {
 
         return agentResult;
       } catch (error) {
-        const signalState = classifySignalFailure(signal, error);
-
-        if (signalState) {
-          log(signalState === "timeout" ? "error" : "warn", `Agent run ${signalState}`);
-          if (signalState === "timeout") {
-            await onError?.(error instanceof Error ? error : new Error(String(error)), {
-              phase: "timeout",
-            });
-          }
-          return {
-            message: "",
-            toolsCalled,
-            iterations: stepIndex,
-            stopReason: signalState,
-            usage: zeroUsage(),
-          };
+        const state = run.state();
+        if (state) {
+          await reportSignal(state, run.signal.reason, "run");
+          return signalResult(state, toolsCalled, stepIndex);
         }
 
         if (error instanceof AgentError) {
@@ -375,6 +343,8 @@ export function createAgent(options: AgentOptions): Agent {
         await onError?.(agentError, { phase: "api" });
 
         throw agentError;
+      } finally {
+        run.dispose();
       }
     },
 
@@ -390,50 +360,48 @@ export function createAgent(options: AgentOptions): Agent {
         traceId: effectiveTraceId,
       });
 
-      const signal = resolveSignal(runOptions);
-
-      yield { type: "start", timestamp: Date.now() };
-
-      if (signal?.aborted) {
-        const agentResult: AgentResult = {
-          message: "",
-          toolsCalled: [],
-          iterations: 0,
-          stopReason: "aborted",
-          usage: zeroUsage(),
-        };
-        yield { type: "complete", result: agentResult };
-        return agentResult;
-      }
-
-      await onStart?.(input);
-
-      const { extraUsage, extraCost } = await summarizeIfOverBudget();
-
-      const userMessage = buildUserMessage(input, attachments);
-      const messages: Message[] = [...historyManager.get(), userMessage];
+      const run = startRun(runOptions);
       const toolsCalled: ToolCallRecord[] = [];
       let stepIndex = 0;
       let stepToolsCalled: ToolCallRecord[] = [];
 
-      const gen = driveStream(
-        () =>
-          sdkAgent.stream({
-            messages,
-            abortSignal: signal,
-            onStepEnd: async (step) => {
-              stepToolsCalled = buildToolCallRecords(step, toolTimings);
-              toolsCalled.push(...stepToolsCalled);
-              await onStep?.({ stepIndex, toolsCalled: stepToolsCalled, textGenerated: step.text });
-            },
-          }),
-        retryOptions
-      );
+      yield { type: "start", timestamp: Date.now() };
 
       try {
-        let next = await gen.next();
-        while (!next.done) {
-          const part = next.value;
+        const initialState = run.state();
+        if (initialState) {
+          const agentResult = signalResult(initialState, toolsCalled, stepIndex);
+          yield { type: "complete", result: agentResult };
+          return agentResult;
+        }
+
+        await onStart?.(input);
+
+        const { extraUsage, extraCost } = await summarizeIfOverBudget();
+
+        const userMessage = buildUserMessage(input, attachments);
+        const messages: Message[] = [...historyManager.get(), userMessage];
+
+        const streamResult = await sdkAgent.stream({
+          messages,
+          abortSignal: run.signal,
+          onStepEnd: async (step) => {
+            stepToolsCalled = buildToolCallRecords(step, toolTimings);
+            toolsCalled.push(...stepToolsCalled);
+            await onStep?.({ stepIndex, toolsCalled: stepToolsCalled, textGenerated: step.text });
+          },
+        });
+
+        for await (const part of streamResult.fullStream) {
+          // An SDK error part or abort part after a signal fired is that signal, not an API error.
+          const state = run.state();
+          if (part.type === "abort" || (part.type === "error" && state)) {
+            await reportSignal(state ?? "aborted", run.signal.reason, "stream");
+            const agentResult = signalResult(state ?? "aborted", toolsCalled, stepIndex);
+            yield { type: "complete", result: agentResult };
+            return agentResult;
+          }
+
           const evt = toAgentEvent(part, toolTimings, stepIndex, stepToolsCalled);
           if (evt) yield evt;
 
@@ -455,11 +423,8 @@ export function createAgent(options: AgentOptions): Agent {
             yield { type: "complete", result: agentResult };
             return agentResult;
           }
-
-          next = await gen.next();
         }
 
-        const streamResult = next.value;
         const text = await streamResult.text;
         const finalUsage = addUsage(toTokenUsage(await streamResult.usage), extraUsage);
         const finishReason = await streamResult.finishReason;
@@ -490,7 +455,14 @@ export function createAgent(options: AgentOptions): Agent {
 
         return agentResult;
       } catch (error) {
-        const signalState = classifySignalFailure(signal, error);
+        const state = run.state();
+        if (state) {
+          await reportSignal(state, run.signal.reason, "stream");
+          const agentResult = signalResult(state, toolsCalled, stepIndex);
+          yield { type: "complete", result: agentResult };
+          return agentResult;
+        }
+
         const errorObj = error instanceof Error ? error : new Error(String(error));
 
         yield { type: "error", error: errorObj };
@@ -499,7 +471,7 @@ export function createAgent(options: AgentOptions): Agent {
           message: "",
           toolsCalled,
           iterations: stepIndex,
-          stopReason: signalState ?? "error",
+          stopReason: "error",
           usage: zeroUsage(),
         };
 
@@ -509,6 +481,10 @@ export function createAgent(options: AgentOptions): Agent {
         yield { type: "complete", result: agentResult };
 
         return agentResult;
+      } finally {
+        // Reached on break/return from the consumer too: stop the model call so tokens stop streaming.
+        run.cancel();
+        run.dispose();
       }
     },
 

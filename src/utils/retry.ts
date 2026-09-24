@@ -1,4 +1,4 @@
-import { AgentError } from "../errors.js";
+import type { LanguageModelMiddleware } from "ai";
 import type { RetryConfig } from "../types.js";
 import { calculateBackoff, sleep } from "./async.js";
 
@@ -6,40 +6,97 @@ export interface RetryOptions extends Required<RetryConfig> {
   logger?: (message: string, meta?: Record<string, unknown>) => void;
 }
 
-export async function executeWithRetry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions,
-  signal?: AbortSignal
-): Promise<T> {
-  const { maxAttempts, backoff, initialDelayMs, maxDelayMs, retryOn, logger } = options;
-  let lastError: Error | undefined;
+type WrapStreamOptions = Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0];
+type StreamResult = Awaited<ReturnType<WrapStreamOptions["doStream"]>>;
+type StreamPart = StreamResult["stream"] extends ReadableStream<infer P> ? P : never;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (signal?.aborted) {
-      throw new AgentError("Request was aborted", "ABORTED");
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Sleeps before the next attempt, or rethrows `error` when no attempt is allowed. Never sleeps once `signal` has fired. */
+async function backoffOrThrow(
+  error: unknown,
+  attempt: number,
+  signal: AbortSignal | undefined,
+  options: RetryOptions
+): Promise<void> {
+  const err = toError(error);
+  if (signal?.aborted || attempt >= options.maxAttempts || !options.retryOn(err)) throw error;
+
+  const delayMs = calculateBackoff(
+    attempt,
+    options.backoff,
+    options.initialDelayMs,
+    options.maxDelayMs
+  );
+  options.logger?.(`Attempt ${attempt} failed, retrying in ${delayMs}ms`, { error: err.message });
+  await sleep(delayMs, signal);
+}
+
+/**
+ * Reads past `stream-start` so a failure before any content (a rejected read or an `error` part)
+ * surfaces as a throw the caller can retry. On success the consumed parts are put back in front.
+ */
+async function openStream(result: StreamResult): Promise<StreamResult> {
+  const reader = result.stream.getReader();
+  const buffered: StreamPart[] = [];
+  let done = false;
+
+  while (!done) {
+    const next = await reader.read();
+    if (next.done) {
+      done = true;
+      break;
     }
-
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-
-      if (attempt === maxAttempts) {
-        break;
-      }
-
-      if (!retryOn(lastError)) {
-        throw lastError;
-      }
-
-      const delayMs = calculateBackoff(attempt, backoff, initialDelayMs, maxDelayMs);
-      logger?.(`Attempt ${attempt} failed, retrying in ${delayMs}ms`, {
-        error: lastError.message,
-      });
-
-      await sleep(delayMs);
-    }
+    if (next.value.type === "error") throw next.value.error;
+    buffered.push(next.value);
+    if (next.value.type !== "stream-start") break;
   }
 
-  throw lastError;
+  return {
+    ...result,
+    stream: new ReadableStream<StreamPart>({
+      start(controller) {
+        for (const part of buffered) controller.enqueue(part);
+        if (done) controller.close();
+      },
+      async pull(controller) {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel: (reason) => reader.cancel(reason),
+    }),
+  };
+}
+
+/**
+ * Retries a single model call. `doGenerate` is retried whole; `doStream` only while nothing past
+ * `stream-start` has been delivered, since replaying would duplicate output the consumer already saw.
+ */
+export function retryMiddleware(options: RetryOptions): LanguageModelMiddleware {
+  return {
+    specificationVersion: "v4",
+
+    wrapGenerate: async ({ doGenerate, params }) => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await doGenerate();
+        } catch (error) {
+          await backoffOrThrow(error, attempt, params.abortSignal, options);
+        }
+      }
+    },
+
+    wrapStream: async ({ doStream, params }) => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await openStream(await doStream());
+        } catch (error) {
+          await backoffOrThrow(error, attempt, params.abortSignal, options);
+        }
+      }
+    },
+  };
 }
