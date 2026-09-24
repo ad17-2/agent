@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.5.0] - 2026-09-24
+
+### Breaking Changes
+
+See [Migrating from 0.4.x](README.md#migrating-from-04x) for the full list.
+
+- Requires Node.js >= 22 and `ai` 7. The loop is built on `ToolLoopAgent`.
+- Serialized history is version 2 and stores the SDK's `ModelMessage`s. `importHistory()` still accepts version 1.
+- `ImageInput`, `ContentBlock` and `RunOptions.image` are removed.
+- `stopReason` is mapped from the SDK's finish reason. Aborts and timeouts return a result instead of throwing.
+- `retry.retryOn` defaults to the provider's retryable flag, so a 400 is attempted once.
+
+### Added
+
+- Per-model dollar cost on `AgentResult.cost`, from a caller-supplied `pricing` table.
+- Token-budget context management: old tool results are pruned during a run, and old turns are summarised between runs.
+- The `telemetry` option is forwarded to the SDK's OpenTelemetry integration. Examples for a console exporter and Langfuse.
+- `@ad17-2/agent/mcp`: `loadMcpTools()` loads tools from MCP servers.
+- `providerOptions`, deep-merged per provider over `thinking`.
+- `TokenUsage` reports cache read/write and reasoning tokens.
+
+### Fixed
+
+- Turns with images or attachments, and tool calls and results, are kept in history. They used to be dropped on the next run.
+- An output-token cap was reported as `max_iterations`, and the step cap as `end_turn`.
+- A retry repeated tools that had already run. Retries now wrap each model call.
+- `stream()` retries a failed call before any content arrives. Breaking out of the loop cancels the request.
+- History eviction keeps tool calls and their results in the same turn.
+- `timeout.toolTimeoutMs` was documented but never read. Tool timeouts now abort the tool's signal.
+- The `tool-call-error` and `step-complete` stream events are now emitted.
+
+### Tooling
+
+- Linting moved to oxlint (type-aware), formatting to Biome, and the build to tsdown. TypeScript 7, Vitest 5 and pnpm 12. Package checks use publint and attw.
+
 ## [0.4.1] - 2025-12-26
 
 ### Changed

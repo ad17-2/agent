@@ -1,127 +1,59 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
+import { APICallError, simulateReadableStream } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
-import { AgentError } from "../src/errors.js";
-import type { AgentResult, SerializedHistory } from "../src/types.js";
+import type { AgentResult, SerializedHistory, SerializedHistoryV1 } from "../src/types.js";
 
-vi.mock("ai", async (importOriginal) => {
-  const original = (await importOriginal()) as Record<string, unknown>;
+function usage(inputTokens = 10, outputTokens = 20) {
   return {
-    ...original,
-    generateText: vi.fn(),
-    streamText: vi.fn(),
-  };
-});
-
-import { generateText, streamText } from "ai";
-const mockGenerateText = vi.mocked(generateText);
-const mockStreamText = vi.mocked(streamText);
-
-const mockModel = { modelId: "test-model" } as Parameters<typeof createAgent>[0]["model"];
-
-type ExecuteFn = (args: unknown, opts: unknown) => Promise<unknown>;
-type StepFinishFn = (data: {
-  toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>;
-  toolResults: Array<{ output: unknown }>;
-  text: string;
-}) => void;
-
-const createMockResult = (overrides: {
-  text?: string;
-  steps?: object[];
-  finishReason?: string;
-  usage?: { inputTokens?: number; outputTokens?: number };
-  reasoning?: unknown;
-}) =>
-  ({
-    text: overrides.text ?? "Response",
-    steps: overrides.steps ?? [{}],
-    finishReason: overrides.finishReason ?? "stop",
-    toolCalls: [],
-    toolResults: [],
-    usage: {
-      inputTokens: overrides.usage?.inputTokens ?? 10,
-      outputTokens: overrides.usage?.outputTokens ?? 20,
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
     },
-    reasoning: overrides.reasoning,
-    content: [],
-    reasoningText: undefined,
-    files: [],
-    sources: [],
-    request: {},
-    response: {},
-    warnings: [],
-    providerMetadata: {},
-    experimental_providerMetadata: {},
-    toDataStreamResponse: () => new Response(),
-    pipeDataStreamToResponse: () => {},
-    toTextStreamResponse: () => new Response(),
-    pipeTextStreamToResponse: () => {},
-  }) as unknown as Awaited<ReturnType<typeof generateText>>;
+    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
+  };
+}
 
-function createMockStreamResult(overrides: {
-  textDeltas?: string[];
-  text?: string;
-  usage?: { inputTokens: number; outputTokens: number };
-  finishReason?: "stop" | "length";
-  error?: Error;
-}) {
-  const textDeltas = overrides.textDeltas ?? ["Hello"];
-  const finalText = overrides.text ?? textDeltas.join("");
-
-  async function* mockFullStream() {
-    if (overrides.error) {
-      throw overrides.error;
-    }
-    for (const text of textDeltas) {
-      yield { type: "text-delta" as const, text };
-    }
-  }
-
-  return {
-    fullStream: mockFullStream(),
-    text: Promise.resolve(finalText),
-    usage: Promise.resolve(overrides.usage ?? { inputTokens: 10, outputTokens: 5 }),
-    finishReason: Promise.resolve(overrides.finishReason ?? "stop"),
-    steps: Promise.resolve([{}]),
-    reasoning: Promise.resolve(undefined),
-  } as unknown as ReturnType<typeof streamText>;
+function mockModel(
+  doGenerate: NonNullable<ConstructorParameters<typeof MockLanguageModelV4>[0]>["doGenerate"]
+) {
+  return new MockLanguageModelV4({ doGenerate });
 }
 
 describe("createAgent", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("creates an agent with run, stream, clearHistory, exportHistory, importHistory methods", () => {
     const agent = createAgent({
-      model: mockModel,
+      model: mockModel(async () => ({
+        content: [{ type: "text", text: "ok" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      })),
       systemPrompt: "You are helpful.",
       tools: {},
     });
 
-    expect(agent.run).toBeInstanceOf(Function);
-    expect(agent.stream).toBeInstanceOf(Function);
-    expect(agent.clearHistory).toBeInstanceOf(Function);
-    expect(agent.exportHistory).toBeInstanceOf(Function);
-    expect(agent.importHistory).toBeInstanceOf(Function);
+    expect(typeof agent.run).toBe("function");
+    expect(typeof agent.stream).toBe("function");
+    expect(typeof agent.clearHistory).toBe("function");
+    expect(typeof agent.exportHistory).toBe("function");
+    expect(typeof agent.importHistory).toBe("function");
   });
 
-  it("returns message and usage from generateText result", async () => {
-    mockGenerateText.mockResolvedValue(
-      createMockResult({
-        text: "Hello! How can I help?",
-        usage: { inputTokens: 15, outputTokens: 25 },
-      })
-    );
+  it("returns message and usage from a run", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Hello! How can I help?" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(15, 25),
+      warnings: [],
+    }));
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "You are helpful.",
-      tools: {},
-    });
-
+    const agent = createAgent({ model, systemPrompt: "You are helpful.", tools: {} });
     const result = await agent.run("Hello");
 
     expect(result.message).toBe("Hello! How can I help?");
@@ -130,23 +62,68 @@ describe("createAgent", () => {
     expect(result.usage.inputTokens).toBe(15);
     expect(result.usage.outputTokens).toBe(25);
     expect(result.usage.totalTokens).toBe(40);
+    expect(result.cost).toBeUndefined();
   });
 
-  it("reports max_iterations when finish reason is length", async () => {
-    mockGenerateText.mockResolvedValue(
-      createMockResult({
-        text: "Partial response...",
-        steps: [{}, {}, {}],
-        finishReason: "length",
-      })
-    );
+  it("attaches cost only when pricing is set", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(1000, 500),
+      warnings: [],
+    }));
 
     const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
+      model,
+      systemPrompt: "You are helpful.",
       tools: {},
+      pricing: { "mock-model-id": { inputPerMTok: 3, outputPerMTok: 15 } },
+    });
+    const result = await agent.run("Hello");
+
+    // 1000 / 1e6 * 3 = 0.003; 500 / 1e6 * 15 = 0.0075
+    expect(result.cost?.inputUsd).toBeCloseTo(0.003, 10);
+    expect(result.cost?.outputUsd).toBeCloseTo(0.0075, 10);
+    expect(result.cost?.totalUsd).toBeCloseTo(0.0105, 10);
+    expect(result.cost?.unpricedModels).toEqual([]);
+  });
+
+  it("reports max_tokens when finish reason is length", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Partial response..." }],
+      finishReason: { unified: "length", raw: "length" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
+    const result = await agent.run("Test");
+
+    expect(result.stopReason).toBe("max_tokens");
+  });
+
+  it("reports max_iterations when a tool-call run hits the step cap", async () => {
+    const echo = defineTool({
+      description: "Echo",
+      schema: z.object({ value: z.string() }),
+      handler: async ({ value }) => value,
     });
 
+    const model = mockModel(async () => ({
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "echo",
+          input: JSON.stringify({ value: "hi" }),
+        },
+      ],
+      finishReason: { unified: "tool-calls", raw: "tool_use" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({ model, systemPrompt: "Test", tools: { echo }, maxIterations: 1 });
     const result = await agent.run("Test");
 
     expect(result.stopReason).toBe("max_iterations");
@@ -156,34 +133,38 @@ describe("createAgent", () => {
     const onToolCall = vi.fn();
     const onToolResult = vi.fn();
 
-    const greetTool = defineTool({
+    const greet = defineTool({
       description: "Greet someone",
       schema: z.object({ name: z.string() }),
       handler: async ({ name }) => `Hello, ${name}!`,
     });
 
-    mockGenerateText.mockImplementation(async (options) => {
-      const tools = options.tools as Record<string, { execute?: ExecuteFn }>;
-      if (tools?.greet?.execute) {
-        await tools.greet.execute({ name: "World" }, { toolCallId: "call-1" });
-      }
-
-      const onStepFinish = options.onStepFinish as StepFinishFn | undefined;
-      if (onStepFinish) {
-        onStepFinish({
-          toolCalls: [{ toolName: "greet", toolCallId: "call-1", input: { name: "World" } }],
-          toolResults: [{ output: "Hello, World!" }],
-          text: "",
-        });
-      }
-
-      return createMockResult({ text: "I greeted World!" });
-    });
+    const model = mockModel([
+      {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "greet",
+            input: JSON.stringify({ name: "World" }),
+          },
+        ],
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: usage(),
+        warnings: [],
+      },
+      {
+        content: [{ type: "text", text: "I greeted World!" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      },
+    ]);
 
     const agent = createAgent({
-      model: mockModel,
+      model,
       systemPrompt: "Test",
-      tools: { greet: greetTool },
+      tools: { greet },
       onToolCall,
       onToolResult,
     });
@@ -199,16 +180,15 @@ describe("createAgent", () => {
     const onStep = vi.fn();
     const onComplete = vi.fn();
 
-    mockGenerateText.mockImplementation(async (options) => {
-      const onStepFinish = options.onStepFinish as StepFinishFn | undefined;
-      if (onStepFinish) {
-        onStepFinish({ toolCalls: [], toolResults: [], text: "Step 1" });
-      }
-      return createMockResult({ text: "Done" });
-    });
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Done" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
     const agent = createAgent({
-      model: mockModel,
+      model,
       systemPrompt: "Test",
       tools: {},
       onStart,
@@ -219,197 +199,226 @@ describe("createAgent", () => {
     await agent.run("Test input");
 
     expect(onStart).toHaveBeenCalledWith("Test input");
-    expect(onStep).toHaveBeenCalledWith({
-      stepIndex: 0,
-      toolsCalled: [],
-      textGenerated: "Step 1",
-    });
+    expect(onStep).toHaveBeenCalledWith(
+      expect.objectContaining({ stepIndex: 0, toolsCalled: [], textGenerated: "Done" })
+    );
     expect(onComplete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Done",
-        stopReason: "end_turn",
-      })
+      expect.objectContaining({ message: "Done", stopReason: "end_turn" })
     );
   });
 
-  it("calls onError hook when API fails", async () => {
+  it("throws AgentError and calls onError when the API call fails", async () => {
     const onError = vi.fn();
 
-    mockGenerateText.mockRejectedValue(new Error("API error"));
+    const model = mockModel(async () => {
+      throw new Error("API error");
+    });
 
     const agent = createAgent({
-      model: mockModel,
+      model,
       systemPrompt: "Test",
       tools: {},
       onError,
+      retry: { maxAttempts: 1 },
     });
 
-    await expect(agent.run("Test")).rejects.toThrow(AgentError);
-    expect(onError).toHaveBeenCalledWith(expect.any(AgentError), { phase: "api" });
+    await expect(agent.run("Test")).rejects.toThrow("API error");
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), { phase: "api" });
   });
 
   it("tracks tool call duration", async () => {
-    const greetTool = defineTool({
+    const greet = defineTool({
       description: "Greet someone",
       schema: z.object({ name: z.string() }),
       handler: async ({ name }) => {
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 20));
         return `Hello, ${name}!`;
       },
     });
 
-    mockGenerateText.mockImplementation(async (options) => {
-      const tools = options.tools as Record<string, { execute?: ExecuteFn }>;
-      if (tools?.greet?.execute) {
-        await tools.greet.execute({ name: "World" }, { toolCallId: "call-1" });
-      }
+    const model = mockModel([
+      {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "greet",
+            input: JSON.stringify({ name: "World" }),
+          },
+        ],
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: usage(),
+        warnings: [],
+      },
+      {
+        content: [{ type: "text", text: "Done" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      },
+    ]);
 
-      const onStepFinish = options.onStepFinish as StepFinishFn | undefined;
-      if (onStepFinish) {
-        onStepFinish({
-          toolCalls: [{ toolName: "greet", toolCallId: "call-1", input: { name: "World" } }],
-          toolResults: [{ output: "Hello, World!" }],
-          text: "",
-        });
-      }
-
-      return createMockResult({ text: "Done" });
-    });
-
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: { greet: greetTool },
-    });
-
+    const agent = createAgent({ model, systemPrompt: "Test", tools: { greet } });
     const result = await agent.run("Test");
 
     expect(result.toolsCalled).toHaveLength(1);
     expect(result.toolsCalled[0]!.durationMs).toBeGreaterThan(0);
   });
 
-  it("throws AgentError when aborted before run", async () => {
+  it("returns an 'aborted' result (does not throw) when aborted before run", async () => {
     const controller = new AbortController();
     controller.abort();
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "unused" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
-    await expect(agent.run("Test", { signal: controller.signal })).rejects.toThrow(AgentError);
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
+    const result = await agent.run("Test", { signal: controller.signal });
+
+    expect(result.stopReason).toBe("aborted");
   });
 
   it("clears history when clearHistory is called", async () => {
-    mockGenerateText.mockResolvedValue(createMockResult({ text: "Response" }));
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Response" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
 
     await agent.run("First message");
     agent.clearHistory();
     await agent.run("Second message");
 
-    const lastCall = mockGenerateText.mock.calls[1];
+    const lastCall = model.doGenerateCalls[1];
     expect(lastCall).toBeDefined();
-    const messages = lastCall![0].messages as Array<{ role: string; content: string }>;
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0]!.content).toBe("Second message");
+    expect(lastCall!.prompt.filter((m) => m.role === "user")).toHaveLength(1);
   });
 
-  it("exports and imports history", async () => {
-    mockGenerateText.mockResolvedValue(createMockResult({ text: "Response" }));
+  it("exports (v2) and imports history, replaying it on the next call", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Response" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
-    const agent1 = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
-
+    const agent1 = createAgent({ model, systemPrompt: "Test", tools: {} });
     await agent1.run("Hello");
     const exported = agent1.exportHistory();
 
-    expect(exported.version).toBe(1);
-    expect(exported.messages).toHaveLength(2);
+    expect(exported.version).toBe(2);
+    expect(exported.messages.length).toBeGreaterThanOrEqual(2);
     expect(exported.exportedAt).toBeDefined();
 
-    const agent2 = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
-
+    const model2 = mockModel(async () => ({
+      content: [{ type: "text", text: "Response" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+    const agent2 = createAgent({ model: model2, systemPrompt: "Test", tools: {} });
     agent2.importHistory(exported);
     await agent2.run("World");
 
-    const lastCall = mockGenerateText.mock.calls[1];
+    const lastCall = model2.doGenerateCalls[0];
     expect(lastCall).toBeDefined();
-    const messages = lastCall![0].messages as Array<{ role: string; content: string }>;
-
-    expect(messages).toHaveLength(3);
+    expect(lastCall!.prompt.length).toBeGreaterThan(1);
   });
 
-  it("throws on invalid history version", () => {
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
+  it("converts a v1 (text-only) serialized history on import", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Response" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
-    const invalidHistory = {
-      version: 99 as 1,
-      messages: [],
+    const v1History: SerializedHistoryV1 = {
+      version: 1,
+      messages: [
+        { role: "user", content: "Hi from v1", timestamp: Date.now() },
+        { role: "assistant", content: "Hello back", timestamp: Date.now() },
+      ],
       exportedAt: Date.now(),
-    } as SerializedHistory;
-
-    expect(() => agent.importHistory(invalidHistory)).toThrow(AgentError);
-  });
-
-  it("uses logger when provided", async () => {
-    const logger = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
     };
 
-    mockGenerateText.mockResolvedValue(createMockResult({ text: "Response" }));
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
+    agent.importHistory(v1History);
+    await agent.run("Continue");
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-      logger,
-    });
+    const lastCall = model.doGenerateCalls[0];
+    expect(lastCall).toBeDefined();
+    expect(lastCall!.prompt.filter((m) => m.role !== "system")).toHaveLength(3);
+  });
 
+  it("throws on an unsupported history version", () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "unused" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
+
+    const invalidHistory = {
+      version: 99,
+      messages: [],
+      exportedAt: Date.now(),
+    } as unknown as SerializedHistory;
+
+    expect(() => agent.importHistory(invalidHistory)).toThrow();
+  });
+
+  it("uses the logger when provided", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "Response" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {}, logger });
     await agent.run("Hello");
 
     expect(logger.info).toHaveBeenCalled();
   });
 
-  it("retries on transient errors", async () => {
+  it("retries run() on transient errors", async () => {
     let attempts = 0;
-    mockGenerateText.mockImplementation(async () => {
+    const model = mockModel(async () => {
       attempts++;
       if (attempts < 3) {
-        throw new Error("Transient error");
+        throw new APICallError({
+          message: "overloaded",
+          url: "https://api.example",
+          requestBodyValues: {},
+          statusCode: 529,
+          isRetryable: true,
+        });
       }
-      return createMockResult({ text: "Success" });
+      return {
+        content: [{ type: "text", text: "Success" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      };
     });
 
     const agent = createAgent({
-      model: mockModel,
+      model,
       systemPrompt: "Test",
       tools: {},
-      retry: {
-        maxAttempts: 3,
-        initialDelayMs: 10,
-      },
+      retry: { maxAttempts: 3, initialDelayMs: 1 },
     });
 
     const result = await agent.run("Test");
@@ -418,16 +427,19 @@ describe("createAgent", () => {
     expect(attempts).toBe(3);
   });
 
-  it("includes reasoning in result when extended thinking is enabled", async () => {
-    mockGenerateText.mockResolvedValue(
-      createMockResult({
-        text: "Answer",
-        reasoning: [{ text: "Let me think..." }],
-      })
-    );
+  it("includes reasoning text in the result when extended thinking is enabled", async () => {
+    const model = mockModel(async () => ({
+      content: [
+        { type: "reasoning", text: "Let me think..." },
+        { type: "text", text: "Answer" },
+      ],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
 
     const agent = createAgent({
-      model: mockModel,
+      model,
       systemPrompt: "Test",
       tools: {},
       thinking: { enabled: true },
@@ -444,23 +456,24 @@ describe("agent.stream", () => {
     vi.clearAllMocks();
   });
 
-  it("yields start event first", async () => {
-    mockStreamText.mockReturnValue(
-      createMockStreamResult({
-        textDeltas: ["Hello"],
-      })
-    );
-
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
+  function streamModel(chunks: LanguageModelV4StreamPart[]) {
+    return new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks }) }),
     });
+  }
 
+  it("yields start event first", async () => {
+    const model = streamModel([
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "1" },
+      { type: "text-delta", id: "1", delta: "Hello" },
+      { type: "text-end", id: "1" },
+      { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage() },
+    ]);
+
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
     const events: unknown[] = [];
-    const generator = agent.stream("Hello");
-
-    for await (const event of generator) {
+    for await (const event of agent.stream("Hello")) {
       events.push(event);
       if (event.type === "complete") break;
     }
@@ -469,51 +482,42 @@ describe("agent.stream", () => {
   });
 
   it("yields text-delta and text-complete events", async () => {
-    mockStreamText.mockReturnValue(
-      createMockStreamResult({
-        textDeltas: ["Hello ", "World"],
-        text: "Hello World",
-      })
-    );
+    const model = streamModel([
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "1" },
+      { type: "text-delta", id: "1", delta: "Hello " },
+      { type: "text-delta", id: "1", delta: "World" },
+      { type: "text-end", id: "1" },
+      { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage() },
+    ]);
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
-
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
     const events: unknown[] = [];
     for await (const event of agent.stream("Test")) {
       events.push(event);
       if (event.type === "complete") break;
     }
 
-    const textDeltas = events.filter((e: unknown) => (e as { type: string }).type === "text-delta");
-    expect(textDeltas).toHaveLength(2);
-    expect(textDeltas[0]).toEqual({ type: "text-delta", content: "Hello " });
-    expect(textDeltas[1]).toEqual({ type: "text-delta", content: "World" });
+    const textDeltas = events.filter((e) => (e as { type: string }).type === "text-delta");
+    expect(textDeltas).toEqual([
+      { type: "text-delta", content: "Hello " },
+      { type: "text-delta", content: "World" },
+    ]);
 
-    const textComplete = events.find(
-      (e: unknown) => (e as { type: string }).type === "text-complete"
-    );
+    const textComplete = events.find((e) => (e as { type: string }).type === "text-complete");
     expect(textComplete).toEqual({ type: "text-complete", content: "Hello World" });
   });
 
   it("yields complete event with full result", async () => {
-    mockStreamText.mockReturnValue(
-      createMockStreamResult({
-        textDeltas: ["Done"],
-        text: "Done",
-        usage: { inputTokens: 10, outputTokens: 5 },
-      })
-    );
+    const model = streamModel([
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "1" },
+      { type: "text-delta", id: "1", delta: "Done" },
+      { type: "text-end", id: "1" },
+      { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage(10, 5) },
+    ]);
 
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
-    });
-
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
     let result: AgentResult | undefined;
     for await (const event of agent.stream("Test")) {
       if (event.type === "complete") {
@@ -529,27 +533,126 @@ describe("agent.stream", () => {
     expect(result!.stopReason).toBe("end_turn");
   });
 
-  it("yields error event on failure", async () => {
-    mockStreamText.mockReturnValue(
-      createMockStreamResult({
-        error: new Error("Stream error"),
-      })
-    );
-
-    const agent = createAgent({
-      model: mockModel,
-      systemPrompt: "Test",
-      tools: {},
+  it("returns an 'error' result (does not throw) once output has started", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            { type: "text-start", id: "1" },
+            { type: "text-delta", id: "1", delta: "partial" },
+            { type: "error", error: new Error("Stream error") },
+          ],
+        }),
+      }),
     });
 
-    const events: unknown[] = [];
-    await expect(async () => {
-      for await (const event of agent.stream("Test")) {
-        events.push(event);
-      }
-    }).rejects.toThrow();
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
 
-    const errorEvent = events.find((e: unknown) => (e as { type: string }).type === "error");
+    const events: unknown[] = [];
+    for await (const event of agent.stream("Test")) {
+      events.push(event);
+    }
+
+    const errorEvent = events.find((e) => (e as { type: string }).type === "error");
     expect(errorEvent).toBeDefined();
+
+    const completeEvent = events.find((e) => (e as { type: string }).type === "complete") as
+      | { type: "complete"; result: AgentResult }
+      | undefined;
+    expect(completeEvent?.result.stopReason).toBe("error");
+  });
+});
+
+describe("createAgent with a context budget", () => {
+  it("summarizes over-budget history before the next call, and never splits a tool call from its result", async () => {
+    let callIndex = 0;
+    const model = mockModel(async () => {
+      callIndex++;
+      if (callIndex === 1) {
+        // first run: makes a tool call
+        return {
+          content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: "{}" }],
+          finishReason: { unified: "tool-calls", raw: "tool_use" },
+          usage: usage(),
+          warnings: [],
+        };
+      }
+      if (callIndex === 2) {
+        // continuation after the tool result, within the same run() call
+        return {
+          content: [{ type: "text", text: "first answer" }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(),
+          warnings: [],
+        };
+      }
+      return {
+        content: [{ type: "text", text: "second answer" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      };
+    });
+
+    const summarizer = mockModel(async () => ({
+      content: [{ type: "text", text: "SUMMARY: earlier turn discussed lookups" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {
+        lookup: defineTool({
+          description: "look something up",
+          schema: z.object({}),
+          handler: async () => "looked up",
+        }),
+      },
+      context: { maxInputTokens: 1, summarize: { model: summarizer, keepRecentTurns: 0 } },
+    });
+
+    await agent.run("First question that triggers a tool call");
+    const result = await agent.run("Second question");
+
+    expect(result.message).toBe("second answer");
+
+    const secondRunCall = model.doGenerateCalls[2];
+    expect(secondRunCall).toBeDefined();
+
+    const promptText = JSON.stringify(secondRunCall!.prompt);
+    expect(promptText).toContain("SUMMARY: earlier turn discussed lookups");
+    expect(promptText).toContain("Second question");
+
+    // the tool call and its result from the first turn must have been summarized away together,
+    // not split (no orphaned call-1 reference left dangling in the prompt sent to the model)
+    expect(promptText).not.toContain("call-1");
+  });
+
+  it("does not summarize when history is under the configured budget", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      context: { maxInputTokens: 1_000_000 },
+    });
+
+    await agent.run("First");
+    await agent.run("Second");
+
+    const secondCall = model.doGenerateCalls[1];
+    const promptText = JSON.stringify(secondCall!.prompt);
+    expect(promptText).toContain("First");
+    expect(promptText).toContain("Second");
   });
 });

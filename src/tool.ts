@@ -12,38 +12,24 @@ export interface ToolErrorContext<TInput = unknown> {
   toolCallId?: string;
 }
 
-export interface ToolOptions<TInput extends z.ZodTypeAny> {
+export interface ToolOptions<TInput extends z.ZodType> {
   description: string;
   schema: TInput;
   handler: (input: z.infer<TInput>, context: ToolContext) => Promise<unknown>;
-  onError?: (context: ToolErrorContext<z.infer<TInput>>) => unknown | Promise<unknown>;
+  onError?: (context: ToolErrorContext<z.infer<TInput>>) => unknown;
+  /** Per-tool timeout; enforced by agent/tool-wrapper.ts, not here. */
   timeoutMs?: number;
 }
 
+/** A `Tool` returned by `defineTool`, carrying its own timeout for `tool-wrapper.ts` to read. */
+export type DefinedTool = Tool & { timeoutMs?: number };
+
 export type { Tool };
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, toolName: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    promise
-      .then((result) => {
-        clearTimeout(timer);
-        resolve(result);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
-
-export function defineTool<TInput extends z.ZodTypeAny>(options: ToolOptions<TInput>): Tool {
+export function defineTool<TInput extends z.ZodType>(options: ToolOptions<TInput>): DefinedTool {
   const { description, schema, handler, onError, timeoutMs } = options;
 
-  return aiTool({
+  const built: DefinedTool = aiTool({
     description,
     inputSchema: schema,
     execute: async (input: z.infer<TInput>, execOptions) => {
@@ -53,13 +39,7 @@ export function defineTool<TInput extends z.ZodTypeAny>(options: ToolOptions<TIn
       };
 
       try {
-        let resultPromise = handler(input, context);
-
-        if (timeoutMs) {
-          resultPromise = withTimeout(resultPromise, timeoutMs, description);
-        }
-
-        return await resultPromise;
+        return await handler(input, context);
       } catch (error) {
         if (onError) {
           const errorContext: ToolErrorContext<z.infer<TInput>> = {
@@ -73,4 +53,7 @@ export function defineTool<TInput extends z.ZodTypeAny>(options: ToolOptions<TIn
       }
     },
   });
+
+  built.timeoutMs = timeoutMs;
+  return built;
 }

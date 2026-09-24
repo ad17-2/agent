@@ -1,3 +1,3 @@
 export { calculateBackoff, sleep } from "./async.js";
-export { createTimeoutSignal } from "./timeout.js";
-export { executeWithRetry, type RetryOptions } from "./retry.js";
+export { createRunSignal, type RunSignal } from "./timeout.js";
+export { isRetryableError, retryMiddleware, type RetryOptions } from "./retry.js";

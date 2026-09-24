@@ -32,6 +32,7 @@ describe("defineTool", () => {
       {
         toolCallId: "test-id",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -57,6 +58,7 @@ describe("defineTool", () => {
       {
         toolCallId: "test-id",
         abortSignal: controller.signal,
+        context: undefined,
         messages: [],
       }
     );
@@ -81,6 +83,7 @@ describe("defineTool", () => {
       {
         toolCallId: "my-tool-call-123",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -105,6 +108,7 @@ describe("defineTool", () => {
       {
         toolCallId: "error-test",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -132,51 +136,32 @@ describe("defineTool", () => {
         {
           toolCallId: "test",
           abortSignal: undefined,
+          context: undefined,
           messages: [],
         }
       )
     ).rejects.toThrow("Unhandled error");
   });
 
-  it("respects timeout configuration", async () => {
+  it("carries timeoutMs for agent/tool-wrapper.ts to enforce, without racing it itself", async () => {
     const tool = defineTool({
       description: "Slow tool",
-      schema: z.object({}),
-      handler: async () => {
-        await new Promise((r) => setTimeout(r, 200));
-        return "completed";
-      },
-      timeoutMs: 50,
-    });
-
-    await expect(
-      tool.execute!(
-        {},
-        {
-          toolCallId: "timeout-test",
-          abortSignal: undefined,
-          messages: [],
-        }
-      )
-    ).rejects.toThrow(/timed out/);
-  });
-
-  it("completes before timeout when fast enough", async () => {
-    const tool = defineTool({
-      description: "Fast tool",
       schema: z.object({}),
       handler: async () => {
         await new Promise((r) => setTimeout(r, 10));
         return "completed";
       },
-      timeoutMs: 1000,
+      timeoutMs: 50,
     });
+
+    expect(tool.timeoutMs).toBe(50);
 
     const result = await tool.execute!(
       {},
       {
         toolCallId: "fast-test",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -202,6 +187,7 @@ describe("defineTool", () => {
       {
         toolCallId: "async-error",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );

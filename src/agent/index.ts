@@ -1,20 +1,39 @@
-import { generateText, streamText, stepCountIs } from "ai";
+import {
+  ToolLoopAgent,
+  gateway,
+  stepCountIs,
+  wrapLanguageModel,
+  type LanguageModel,
+  type StepResult,
+  type ToolSet,
+} from "ai";
 import { AgentError } from "../errors.js";
-import { buildHistoryFromResult, buildMessages } from "../message/index.js";
+import { buildUserMessage } from "../message.js";
 import type {
   AgentEvent,
   AgentOptions,
   AgentResult,
+  Cost,
+  Message,
+  ProviderOptions,
   RetryConfig,
   RunOptions,
   SerializedHistory,
-  StepInfo,
-  StopReason,
+  SerializedHistoryV1,
   TokenUsage,
   ToolCallRecord,
 } from "../types.js";
-import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
+import {
+  createRunSignal,
+  isRetryableError,
+  retryMiddleware,
+  type RetryOptions,
+} from "../utils/index.js";
+import { sumCost } from "../cost.js";
+import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
+import { toAgentEvent, toTokenUsage } from "./events.js";
 import { HistoryManager } from "./history.js";
+import { toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -28,7 +47,7 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   backoff: "exponential",
   initialDelayMs: 1000,
   maxDelayMs: 30000,
-  retryOn: () => true,
+  retryOn: isRetryableError,
 };
 
 export interface Agent {
@@ -36,20 +55,91 @@ export interface Agent {
   stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
   clearHistory(): void;
   exportHistory(): SerializedHistory;
-  importHistory(history: SerializedHistory): void;
+  importHistory(history: SerializedHistory | SerializedHistoryV1): void;
+}
+
+function zeroUsage(): TokenUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+  };
+}
+
+function buildToolCallRecords(
+  step: StepResult<ToolSet>,
+  toolTimings: ReadonlyMap<string, number>
+): ToolCallRecord[] {
+  const errorsById = new Map(
+    step.content
+      .filter(
+        (part): part is Extract<typeof part, { type: "tool-error" }> => part.type === "tool-error"
+      )
+      .map((part) => [part.toolCallId, part])
+  );
+  const resultsById = new Map(step.toolResults.map((result) => [result.toolCallId, result]));
+
+  return step.toolCalls.map((call) => {
+    const errorPart = errorsById.get(call.toolCallId);
+    const result = resultsById.get(call.toolCallId);
+
+    return {
+      name: call.toolName,
+      input: call.input,
+      output: result?.output,
+      durationMs: toolTimings.get(call.toolCallId) ?? 0,
+      error: errorPart ? true : undefined,
+      errorMessage: errorPart
+        ? errorPart.error instanceof Error
+          ? errorPart.error.message
+          : String(errorPart.error)
+        : undefined,
+    };
+  });
+}
+
+/** String model ids resolve like the SDK does: through the global default provider, else the gateway. */
+function resolveModel(model: LanguageModel) {
+  return typeof model === "string"
+    ? (globalThis.AI_SDK_DEFAULT_PROVIDER ?? gateway).languageModel(model)
+    : model;
+}
+
+/** Merges per provider key, so caller options under `anthropic` do not wipe the `thinking` entry. */
+function mergeProviderOptions(base: ProviderOptions, extra: ProviderOptions): ProviderOptions {
+  const merged: ProviderOptions = { ...base };
+  for (const [provider, options] of Object.entries(extra)) {
+    merged[provider] = { ...merged[provider], ...options };
+  }
+  return merged;
+}
+
+function signalResult(
+  stopReason: "aborted" | "timeout",
+  toolsCalled: ToolCallRecord[],
+  iterations: number
+): AgentResult {
+  return { message: "", toolsCalled, iterations, stopReason, usage: zeroUsage() };
 }
 
 export function createAgent(options: AgentOptions): Agent {
   const {
-    model,
+    model: modelOption,
     systemPrompt,
     tools,
     maxIterations = DEFAULT_MAX_ITERATIONS,
     maxTokens = DEFAULT_MAX_TOKENS,
     conversation,
     thinking,
+    providerOptions: extraProviderOptions,
     retry: retryConfig,
     timeout: timeoutConfig,
+    pricing,
+    context: contextConfig,
+    telemetry: telemetryConfig,
     logger,
     traceId: agentTraceId,
     onStart,
@@ -60,7 +150,14 @@ export function createAgent(options: AgentOptions): Agent {
     onComplete,
   } = options;
 
-  const retry = { ...DEFAULT_RETRY, ...retryConfig };
+  // Field by field so an explicit `undefined` still takes the default.
+  const retry: Required<RetryConfig> = {
+    maxAttempts: retryConfig?.maxAttempts ?? DEFAULT_RETRY.maxAttempts,
+    backoff: retryConfig?.backoff ?? DEFAULT_RETRY.backoff,
+    initialDelayMs: retryConfig?.initialDelayMs ?? DEFAULT_RETRY.initialDelayMs,
+    maxDelayMs: retryConfig?.maxDelayMs ?? DEFAULT_RETRY.maxDelayMs,
+    retryOn: retryConfig?.retryOn ?? DEFAULT_RETRY.retryOn,
+  };
 
   function log(
     level: "debug" | "info" | "warn" | "error",
@@ -79,129 +176,174 @@ export function createAgent(options: AgentOptions): Agent {
   );
 
   const toolTimings = new Map<string, number>();
-  const wrappedTools = wrapToolsWithCallbacks(tools, toolTimings, logger, {
-    onToolCall,
-    onToolResult,
-    onError,
-  });
+  const wrappedTools = wrapToolsWithCallbacks(
+    tools,
+    toolTimings,
+    logger,
+    { onToolCall, onToolResult, onError },
+    timeoutConfig
+  );
 
   const retryOptions: RetryOptions = {
     ...retry,
     logger: (msg, meta) => log("warn", msg, meta),
   };
+  /** Built per call: a string id resolves like the SDK does, at call time, so a provider registered later is honoured. */
+  function callModel(model: LanguageModel) {
+    return wrapLanguageModel({
+      model: resolveModel(model),
+      middleware: retryMiddleware(retryOptions),
+    });
+  }
 
-  function extractReasoningText(reasoning: unknown): string | undefined {
-    if (!reasoning) return undefined;
-    if (typeof reasoning === "string") return reasoning;
-    if (Array.isArray(reasoning)) {
-      return reasoning
-        .map((r) => (typeof r === "object" && r !== null && "text" in r ? r.text : String(r)))
-        .join("\n");
+  const thinkingProviderOptions = thinking?.enabled
+    ? {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens: thinking.budgetTokens ?? 10000 },
+        },
+      }
+    : undefined;
+
+  const providerOptions =
+    thinkingProviderOptions || extraProviderOptions
+      ? mergeProviderOptions(thinkingProviderOptions ?? {}, extraProviderOptions ?? {})
+      : undefined;
+
+  // functionId groups telemetry data by function in the exporter's UI; default it to traceId when unset.
+  const telemetry = telemetryConfig
+    ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
+    : undefined;
+
+  const sdkAgent = new ToolLoopAgent({
+    model: modelOption,
+    instructions: systemPrompt,
+    tools: wrappedTools,
+    stopWhen: stepCountIs(maxIterations),
+    maxOutputTokens: maxTokens,
+    maxRetries: 0,
+    providerOptions,
+    telemetry,
+    // Per call: the model is resolved and wrapped now, and trimForStep's calibration is this run's own.
+    prepareCall: (call) => ({
+      ...call,
+      model: callModel(modelOption),
+      prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+    }),
+  });
+
+  /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
+  async function summarizeIfOverBudget(
+    abortSignal: AbortSignal
+  ): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
+    if (!contextConfig || estimateTokens(historyManager.get()) <= contextConfig.maxInputTokens) {
+      return { extraUsage: zeroUsage() };
     }
-    return undefined;
+
+    const summarizeModel = callModel(contextConfig.summarize?.model ?? modelOption);
+    const { messages, usage } = await summarizeHistory(
+      historyManager.get(),
+      contextConfig,
+      summarizeModel,
+      { abortSignal }
+    );
+    historyManager.save(messages);
+
+    log("info", "History summarized", {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+
+    return {
+      extraUsage: toTokenUsage(usage),
+      extraCost: pricing
+        ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing)
+        : undefined,
+    };
+  }
+
+  function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+    return {
+      inputTokens: a.inputTokens + b.inputTokens,
+      outputTokens: a.outputTokens + b.outputTokens,
+      totalTokens: a.totalTokens + b.totalTokens,
+      cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+      cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+      reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+    };
+  }
+
+  function addCost(a: Cost | undefined, b: Cost | undefined): Cost | undefined {
+    if (!a) return b;
+    if (!b) return a;
+    return {
+      inputUsd: a.inputUsd + b.inputUsd,
+      outputUsd: a.outputUsd + b.outputUsd,
+      cacheReadUsd: a.cacheReadUsd + b.cacheReadUsd,
+      cacheWriteUsd: a.cacheWriteUsd + b.cacheWriteUsd,
+      totalUsd: a.totalUsd + b.totalUsd,
+      unpricedModels: [...new Set([...a.unpricedModels, ...b.unpricedModels])],
+    };
+  }
+
+  function startRun(runOptions: RunOptions | undefined) {
+    return createRunSignal(
+      runOptions?.timeoutMs ?? timeoutConfig?.runTimeoutMs,
+      runOptions?.signal
+    );
+  }
+
+  /** Logs a signal-ended run; a timeout is an error the caller hears about, an abort is not. */
+  async function reportSignal(state: "aborted" | "timeout", reason: unknown, kind: string) {
+    log(state === "timeout" ? "error" : "warn", `Agent ${kind} ${state}`);
+    if (state === "timeout") {
+      await onError?.(reason instanceof Error ? reason : new Error(String(reason)), {
+        phase: "timeout",
+      });
+    }
   }
 
   return {
     async run(input: string, runOptions?: RunOptions): Promise<AgentResult> {
-      const { image, attachments, signal: userSignal, timeoutMs, traceId } = runOptions ?? {};
+      const { attachments, traceId } = runOptions ?? {};
       const effectiveTraceId = traceId ?? agentTraceId;
 
       log("info", "Agent run started", { input: input.slice(0, 100), traceId: effectiveTraceId });
 
-      const effectiveTimeout = timeoutMs ?? timeoutConfig?.runTimeoutMs;
-      const signal = effectiveTimeout
-        ? createTimeoutSignal(effectiveTimeout, userSignal)
-        : userSignal;
-
-      if (signal?.aborted) {
-        throw new AgentError("Request was aborted", "ABORTED");
-      }
-
-      await onStart?.(input);
-
-      const currentHistory = historyManager.get();
+      const run = startRun(runOptions);
       const toolsCalled: ToolCallRecord[] = [];
-      let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
 
-      const usage: TokenUsage = {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-      };
-
       try {
-        const messages = buildMessages(currentHistory, input, image, attachments);
+        const initialState = run.state();
+        if (initialState) return signalResult(initialState, toolsCalled, stepIndex);
 
-        const result = await executeWithRetry(
-          () =>
-            generateText({
-              model,
-              system: systemPrompt,
-              messages,
-              tools: wrappedTools,
-              stopWhen: stepCountIs(maxIterations),
-              maxOutputTokens: maxTokens,
-              abortSignal: signal,
-              providerOptions: thinking?.enabled
-                ? {
-                    anthropic: {
-                      thinking: {
-                        type: "enabled",
-                        budgetTokens: thinking.budgetTokens ?? 10000,
-                      },
-                    },
-                  }
-                : undefined,
-              onStepFinish: async ({ toolCalls, toolResults, text }) => {
-                const stepToolsCalled: ToolCallRecord[] = [];
+        await onStart?.(input);
 
-                for (let i = 0; i < toolCalls.length; i++) {
-                  const call = toolCalls[i];
-                  const toolResult = toolResults[i];
-                  if (call && toolResult) {
-                    const record: ToolCallRecord = {
-                      name: call.toolName,
-                      input: call.input,
-                      output: toolResult.output,
-                      durationMs: toolTimings.get(call.toolCallId) ?? 0,
-                    };
-                    toolsCalled.push(record);
-                    stepToolsCalled.push(record);
-                  }
-                }
+        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
 
-                const stepInfo: StepInfo = {
-                  stepIndex,
-                  toolsCalled: stepToolsCalled,
-                  textGenerated: text,
-                };
-                await onStep?.(stepInfo);
-                stepIndex++;
-              },
-            }),
-          retryOptions,
-          signal
+        const userMessage = buildUserMessage(input, attachments);
+        const messages: Message[] = [...historyManager.get(), userMessage];
+
+        const result = await sdkAgent.generate({
+          messages,
+          abortSignal: run.signal,
+          onStepEnd: async (step) => {
+            const stepTools = buildToolCallRecords(step, toolTimings);
+            toolsCalled.push(...stepTools);
+            await onStep?.({ stepIndex, toolsCalled: stepTools, textGenerated: step.text });
+            stepIndex++;
+          },
+        });
+
+        const usage = addUsage(toTokenUsage(result.usage), extraUsage);
+        const stopReason = toStopReason(
+          result.finishReason,
+          result.steps,
+          maxIterations,
+          undefined
         );
 
-        usage.inputTokens = result.usage?.inputTokens ?? 0;
-        usage.outputTokens = result.usage?.outputTokens ?? 0;
-        usage.totalTokens = usage.inputTokens + usage.outputTokens;
-
-        if (result.finishReason === "length") {
-          stopReason = "max_iterations";
-        } else if (result.finishReason === "stop") {
-          stopReason = "end_turn";
-        }
-
-        const updatedHistory = buildHistoryFromResult(
-          currentHistory,
-          input,
-          image,
-          attachments,
-          result.text
-        );
-        historyManager.save(updatedHistory);
+        historyManager.append(userMessage, result.responseMessages);
 
         const agentResult: AgentResult = {
           message: result.text,
@@ -209,7 +351,8 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: result.steps.length,
           stopReason,
           usage,
-          thinking: extractReasoningText(result.reasoning),
+          cost: pricing ? addCost(sumCost(result.steps, pricing), extraCost) : undefined,
+          thinking: result.finalStep.reasoningText,
         };
 
         log("info", "Agent run completed", { iterations: agentResult.iterations, stopReason });
@@ -217,19 +360,10 @@ export function createAgent(options: AgentOptions): Agent {
 
         return agentResult;
       } catch (error) {
-        const isTimeout = error instanceof Error && error.message.includes("timed out");
-        const isAborted =
-          signal?.aborted || (error instanceof AgentError && error.code === "ABORTED");
-
-        if (isTimeout) {
-          log("error", "Agent run timed out", { error: (error as Error).message });
-          await onError?.(error as Error, { phase: "timeout" });
-          throw new AgentError("Request timed out", "ABORTED");
-        }
-
-        if (isAborted) {
-          log("warn", "Agent run aborted");
-          throw new AgentError("Request was aborted", "ABORTED");
+        const state = run.state();
+        if (state) {
+          await reportSignal(state, run.signal.reason, "run");
+          return signalResult(state, toolsCalled, stepIndex);
         }
 
         if (error instanceof AgentError) {
@@ -246,6 +380,8 @@ export function createAgent(options: AgentOptions): Agent {
         await onError?.(agentError, { phase: "api" });
 
         throw agentError;
+      } finally {
+        run.dispose();
       }
     },
 
@@ -253,7 +389,7 @@ export function createAgent(options: AgentOptions): Agent {
       input: string,
       runOptions?: RunOptions
     ): AsyncGenerator<AgentEvent, AgentResult, undefined> {
-      const { image, attachments, signal: userSignal, timeoutMs, traceId } = runOptions ?? {};
+      const { attachments, traceId } = runOptions ?? {};
       const effectiveTraceId = traceId ?? agentTraceId;
 
       log("info", "Agent stream started", {
@@ -261,147 +397,93 @@ export function createAgent(options: AgentOptions): Agent {
         traceId: effectiveTraceId,
       });
 
-      const effectiveTimeout = timeoutMs ?? timeoutConfig?.runTimeoutMs;
-      const signal = effectiveTimeout
-        ? createTimeoutSignal(effectiveTimeout, userSignal)
-        : userSignal;
-
-      if (signal?.aborted) {
-        throw new AgentError("Request was aborted", "ABORTED");
-      }
-
-      yield { type: "start", timestamp: Date.now() };
-      await onStart?.(input);
-
-      const currentHistory = historyManager.get();
+      const run = startRun(runOptions);
       const toolsCalled: ToolCallRecord[] = [];
-      let stopReason: StopReason = "end_turn";
       let stepIndex = 0;
+      let stepToolsCalled: ToolCallRecord[] = [];
 
-      const usage: TokenUsage = {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-      };
-
+      // Every yield sits inside this try, so a consumer that stops after any event reaches the finally.
       try {
-        const messages = buildMessages(currentHistory, input, image, attachments);
+        yield { type: "start", timestamp: Date.now() };
 
-        const streamResult = streamText({
-          model,
-          system: systemPrompt,
+        const initialState = run.state();
+        if (initialState) {
+          const agentResult = signalResult(initialState, toolsCalled, stepIndex);
+          yield { type: "complete", result: agentResult };
+          return agentResult;
+        }
+
+        await onStart?.(input);
+
+        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
+
+        const userMessage = buildUserMessage(input, attachments);
+        const messages: Message[] = [...historyManager.get(), userMessage];
+
+        const streamResult = await sdkAgent.stream({
           messages,
-          tools: wrappedTools,
-          stopWhen: stepCountIs(maxIterations),
-          maxOutputTokens: maxTokens,
-          abortSignal: signal,
-          providerOptions: thinking?.enabled
-            ? {
-                anthropic: {
-                  thinking: {
-                    type: "enabled",
-                    budgetTokens: thinking.budgetTokens ?? 10000,
-                  },
-                },
-              }
-            : undefined,
-          onStepFinish: async ({ toolCalls, toolResults, text }) => {
-            const stepToolsCalled: ToolCallRecord[] = [];
-
-            for (let i = 0; i < toolCalls.length; i++) {
-              const call = toolCalls[i];
-              const toolResult = toolResults[i];
-              if (call && toolResult) {
-                const record: ToolCallRecord = {
-                  name: call.toolName,
-                  input: call.input,
-                  output: toolResult.output,
-                  durationMs: toolTimings.get(call.toolCallId) ?? 0,
-                };
-                toolsCalled.push(record);
-                stepToolsCalled.push(record);
-              }
-            }
-
-            const stepInfo: StepInfo = {
-              stepIndex,
-              toolsCalled: stepToolsCalled,
-              textGenerated: text,
-            };
-            await onStep?.(stepInfo);
-            stepIndex++;
+          abortSignal: run.signal,
+          onStepEnd: async (step) => {
+            stepToolsCalled = buildToolCallRecords(step, toolTimings);
+            toolsCalled.push(...stepToolsCalled);
+            await onStep?.({ stepIndex, toolsCalled: stepToolsCalled, textGenerated: step.text });
           },
         });
 
         for await (const part of streamResult.fullStream) {
-          if (signal?.aborted) {
-            throw new AgentError("Request was aborted", "ABORTED");
+          // An SDK error part or abort part after a signal fired is that signal, not an API error.
+          const state = run.state();
+          if (part.type === "abort" || (part.type === "error" && state)) {
+            await reportSignal(state ?? "aborted", run.signal.reason, "stream");
+            const agentResult = signalResult(state ?? "aborted", toolsCalled, stepIndex);
+            yield { type: "complete", result: agentResult };
+            return agentResult;
           }
 
-          switch (part.type) {
-            case "text-delta":
-              yield { type: "text-delta", content: part.text };
-              break;
+          const evt = toAgentEvent(part, toolTimings, stepIndex, stepToolsCalled);
+          if (evt) yield evt;
 
-            case "tool-call":
-              yield {
-                type: "tool-call-start",
-                name: part.toolName,
-                input: part.input,
-                toolCallId: part.toolCallId,
-              };
-              break;
+          if (part.type === "finish-step") {
+            stepIndex++;
+            stepToolsCalled = [];
+          }
 
-            case "tool-result":
-              yield {
-                type: "tool-call-complete",
-                name: part.toolName,
-                output: part.output,
-                toolCallId: part.toolCallId,
-                durationMs: toolTimings.get(part.toolCallId) ?? 0,
-              };
-              break;
-
-            case "reasoning-delta":
-              yield { type: "thinking", content: part.text };
-              break;
+          if (evt?.type === "error") {
+            const agentResult: AgentResult = {
+              message: "",
+              toolsCalled,
+              iterations: stepIndex,
+              stopReason: "error",
+              usage: zeroUsage(),
+            };
+            log("error", "Agent stream failed mid-stream", { error: evt.error.message });
+            await onError?.(evt.error, { phase: "api" });
+            yield { type: "complete", result: agentResult };
+            return agentResult;
           }
         }
 
         const text = await streamResult.text;
-        const finalUsage = await streamResult.usage;
+        const finalUsage = addUsage(toTokenUsage(await streamResult.usage), extraUsage);
         const finishReason = await streamResult.finishReason;
         const steps = await streamResult.steps;
-        const reasoning = await streamResult.reasoning;
+        const responseMessages = await streamResult.responseMessages;
+        const reasoningText = (await streamResult.finalStep).reasoningText;
 
-        usage.inputTokens = finalUsage?.inputTokens ?? 0;
-        usage.outputTokens = finalUsage?.outputTokens ?? 0;
-        usage.totalTokens = usage.inputTokens + usage.outputTokens;
-
-        if (finishReason === "length") {
-          stopReason = "max_iterations";
-        } else if (finishReason === "stop") {
-          stopReason = "end_turn";
-        }
+        const stopReason = toStopReason(finishReason, steps, maxIterations, undefined);
 
         yield { type: "text-complete", content: text };
 
-        const updatedHistory = buildHistoryFromResult(
-          currentHistory,
-          input,
-          image,
-          attachments,
-          text
-        );
-        historyManager.save(updatedHistory);
+        historyManager.append(userMessage, responseMessages);
 
         const agentResult: AgentResult = {
           message: text,
           toolsCalled,
           iterations: steps.length,
           stopReason,
-          usage,
-          thinking: extractReasoningText(reasoning),
+          usage: finalUsage,
+          cost: pricing ? addCost(sumCost(steps, pricing), extraCost) : undefined,
+          thinking: reasoningText,
         };
 
         log("info", "Agent stream completed", { iterations: agentResult.iterations, stopReason });
@@ -411,13 +493,36 @@ export function createAgent(options: AgentOptions): Agent {
 
         return agentResult;
       } catch (error) {
+        const state = run.state();
+        if (state) {
+          await reportSignal(state, run.signal.reason, "stream");
+          const agentResult = signalResult(state, toolsCalled, stepIndex);
+          yield { type: "complete", result: agentResult };
+          return agentResult;
+        }
+
         const errorObj = error instanceof Error ? error : new Error(String(error));
+
         yield { type: "error", error: errorObj };
+
+        const agentResult: AgentResult = {
+          message: "",
+          toolsCalled,
+          iterations: stepIndex,
+          stopReason: "error",
+          usage: zeroUsage(),
+        };
 
         log("error", "Agent stream failed", { error: errorObj.message });
         await onError?.(errorObj, { phase: "api" });
 
-        throw new AgentError(errorObj.message, "API_ERROR", errorObj);
+        yield { type: "complete", result: agentResult };
+
+        return agentResult;
+      } finally {
+        // Reached on break/return from the consumer too: stop the model call so tokens stop streaming.
+        run.cancel();
+        run.dispose();
       }
     },
 
@@ -429,7 +534,7 @@ export function createAgent(options: AgentOptions): Agent {
       return historyManager.export();
     },
 
-    importHistory(serialized: SerializedHistory): void {
+    importHistory(serialized: SerializedHistory | SerializedHistoryV1): void {
       historyManager.import(serialized);
     },
   };

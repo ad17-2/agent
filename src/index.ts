@@ -12,19 +12,20 @@ export {
   type StructuredResult,
 } from "./structured.js";
 export { AgentError, type AgentErrorCode } from "./errors.js";
+export { costOf, sumCost } from "./cost.js";
+export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } from "./context.js";
 
 export type {
   AgentOptions,
   AgentResult,
   RunOptions,
   ConversationConfig,
-  ImageInput,
   ToolCallRecord,
   StopReason,
   Message,
-  ContentBlock,
   TokenUsage,
   SerializedHistory,
+  SerializedHistoryV1,
   AgentEvent,
   StepInfo,
   AgentHooks,
@@ -40,6 +41,11 @@ export type {
   BackoffStrategy,
   Logger,
   LogLevel,
+  ModelPrice,
+  PriceTable,
+  Cost,
+  ContextConfig,
 } from "./types.js";
 
 export { z } from "zod";
+export type { TelemetryOptions } from "ai";

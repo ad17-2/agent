@@ -4,17 +4,18 @@ export type AgentErrorCode =
   | "TOOL_EXECUTION"
   | "API_ERROR"
   | "MAX_ITERATIONS"
-  | "ABORTED";
+  | "ABORTED"
+  | "MCP_TOOL_CONFLICT";
 
 export class AgentError extends Error {
   override readonly name = "AgentError";
+  readonly code: AgentErrorCode;
+  override readonly cause?: Error;
 
-  constructor(
-    message: string,
-    public readonly code: AgentErrorCode,
-    public override readonly cause?: Error
-  ) {
+  constructor(message: string, code: AgentErrorCode, cause?: Error) {
     super(message);
+    this.code = code;
+    this.cause = cause;
   }
 
   static is(error: unknown): error is AgentError {

@@ -1,4 +1,14 @@
-import type { LanguageModel, Tool } from "ai";
+import type {
+  LanguageModel,
+  ModelMessage,
+  TelemetryOptions,
+  Tool,
+  ToolLoopAgentSettings,
+  ToolSet,
+} from "ai";
+
+/** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`; the SDK's own type (JSON values only). */
+export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -31,11 +41,6 @@ export interface ThinkingConfig {
 
 export type ImageMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 export type AttachmentMimeType = ImageMimeType | "application/pdf";
-
-export interface ImageInput {
-  base64: string;
-  mimeType: ImageMimeType;
-}
 
 interface BaseAttachment {
   name?: string;
@@ -85,21 +90,28 @@ export interface ConversationConfig {
   ttlMs?: number;
 }
 
-export type Message = {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-  timestamp?: number;
-};
+export interface ContextConfig {
+  maxInputTokens: number;
+  summarize?: { model?: LanguageModel; keepRecentTurns?: number; instructions?: string };
+}
 
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; image: string; mimeType: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool-result"; toolCallId: string; result: unknown };
+// History is stored as the SDK's own messages, so nothing is lost on replay.
+export type Message = ModelMessage & { timestamp?: number };
 
 export interface SerializedHistory {
-  version: 1;
+  version: 2;
   messages: Message[];
+  exportedAt: number;
+}
+
+/** A version-1 (pre-ai-7) serialized history, kept only for import conversion. */
+export interface SerializedHistoryV1 {
+  version: 1;
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string | unknown[];
+    timestamp?: number;
+  }>;
   exportedAt: number;
 }
 
@@ -107,6 +119,27 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+}
+
+export interface ModelPrice {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  cacheWritePerMTok?: number;
+}
+
+export type PriceTable = Record<string, ModelPrice>;
+
+export interface Cost {
+  inputUsd: number;
+  outputUsd: number;
+  cacheReadUsd: number;
+  cacheWriteUsd: number;
+  totalUsd: number;
+  unpricedModels: string[];
 }
 
 export interface ToolCallRecord {
@@ -131,7 +164,7 @@ export type AgentEvent =
       durationMs: number;
     }
   | { type: "tool-call-error"; name: string; error: string; toolCallId: string }
-  | { type: "step-complete"; stepIndex: number; toolsCalled: ToolCallRecord[] }
+  | { type: "step-complete"; stepIndex: number; toolsCalled: ToolCallRecord[]; usage: TokenUsage }
   | { type: "thinking"; content: string }
   | { type: "complete"; result: AgentResult }
   | { type: "error"; error: Error };
@@ -157,27 +190,37 @@ export interface AgentHooks {
 export interface AgentOptions extends AgentHooks {
   model: LanguageModel;
   systemPrompt: string;
-  tools: Record<string, Tool>;
+  tools: ToolSet;
   maxIterations?: number;
   maxTokens?: number;
   conversation?: ConversationConfig;
   thinking?: ThinkingConfig;
+  providerOptions?: ProviderOptions;
   retry?: RetryConfig;
   timeout?: TimeoutConfig;
+  pricing?: PriceTable;
+  context?: ContextConfig;
+  telemetry?: TelemetryOptions;
   logger?: Logger;
   traceId?: string;
 }
 
 export interface RunOptions {
-  /** @deprecated Use `attachments` instead */
-  image?: ImageInput;
   attachments?: Attachment[];
   signal?: AbortSignal;
   timeoutMs?: number;
   traceId?: string;
 }
 
-export type StopReason = "end_turn" | "max_iterations" | "error" | "aborted" | "timeout";
+export type StopReason =
+  | "end_turn"
+  | "max_iterations"
+  | "max_tokens"
+  | "content_filter"
+  | "error"
+  | "aborted"
+  | "timeout"
+  | "other";
 
 export interface AgentResult {
   message: string;
@@ -185,5 +228,8 @@ export interface AgentResult {
   iterations: number;
   stopReason: StopReason;
   usage: TokenUsage;
+  cost?: Cost;
   thinking?: string;
 }
+
+export type { Tool, ToolSet };

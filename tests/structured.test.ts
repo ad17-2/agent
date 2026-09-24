@@ -1,138 +1,136 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { z } from "zod";
+import { MockLanguageModelV4 } from "ai/test";
 import { generateStructured } from "../src/structured.js";
 
-vi.mock("ai", async (importOriginal) => {
-  const original = (await importOriginal()) as Record<string, unknown>;
+function usage(inputTokens = 50, outputTokens = 25) {
   return {
-    ...original,
-    generateObject: vi.fn(),
-  };
-});
-
-import { generateObject } from "ai";
-const mockGenerateObject = vi.mocked(generateObject);
-
-const mockModel = { modelId: "test-model" } as Parameters<typeof generateStructured>[0]["model"];
-
-const createMockResult = <T>(object: T, usage?: { inputTokens?: number; outputTokens?: number }) =>
-  ({
-    object,
-    usage: {
-      inputTokens: usage?.inputTokens ?? 50,
-      outputTokens: usage?.outputTokens ?? 25,
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
     },
-  }) as unknown as Awaited<ReturnType<typeof generateObject>>;
+    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
+  };
+}
 
 describe("generateStructured", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("returns parsed data matching schema", async () => {
-    const schema = z.object({
-      name: z.string(),
-      age: z.number(),
+    const schema = z.object({ name: z.string(), age: z.number() });
+
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ name: "Alice", age: 30 }) }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(50, 25),
+        warnings: [],
+      }),
     });
 
-    mockGenerateObject.mockResolvedValue(
-      createMockResult({ name: "Alice", age: 30 }, { inputTokens: 50, outputTokens: 25 })
-    );
-
-    const result = await generateStructured({
-      model: mockModel,
-      schema,
-      prompt: "Extract person info",
-    });
+    const result = await generateStructured({ model, schema, prompt: "Extract person info" });
 
     expect(result.data).toEqual({ name: "Alice", age: 30 });
     expect(result.usage.inputTokens).toBe(50);
     expect(result.usage.outputTokens).toBe(25);
   });
 
-  it("passes image content when provided", async () => {
+  it("converts image input to a `{type:'file', mediaType, data}` part", async () => {
     const schema = z.object({ description: z.string() });
 
-    mockGenerateObject.mockResolvedValue(
-      createMockResult({ description: "A cat" }, { inputTokens: 100, outputTokens: 10 })
-    );
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ description: "A cat" }) }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(100, 10),
+        warnings: [],
+      }),
+    });
 
     await generateStructured({
-      model: mockModel,
+      model,
       schema,
       prompt: "Describe this image",
-      image: {
-        base64: "aGVsbG8=",
-        mimeType: "image/png",
-      },
+      image: { base64: "aGVsbG8=", mimeType: "image/png" },
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0];
-    expect(callArgs).toBeDefined();
-    const messages = callArgs![0].messages as Array<{ content: unknown[] }>;
+    const call = model.doGenerateCalls[0];
+    expect(call).toBeDefined();
 
-    expect(messages[0]!.content).toHaveLength(2);
-    expect(messages[0]!.content[0]).toMatchObject({
-      type: "image",
-      image: "aGVsbG8=",
-      mimeType: "image/png",
-    });
+    const userMessage = call!.prompt.find((m) => m.role === "user");
+    expect(userMessage).toBeDefined();
+    const content = userMessage!.content as Array<{
+      type: string;
+      mediaType?: string;
+      data?: unknown;
+    }>;
+
+    expect(content.some((part) => part.type === "file" && part.mediaType === "image/png")).toBe(
+      true
+    );
+    expect(content.every((part) => part.type !== "image")).toBe(true);
   });
 
   it("handles missing usage gracefully", async () => {
     const schema = z.object({ value: z.number() });
 
-    mockGenerateObject.mockResolvedValue({
-      object: { value: 42 },
-      usage: {},
-    } as unknown as Awaited<ReturnType<typeof generateObject>>);
-
-    const result = await generateStructured({
-      model: mockModel,
-      schema,
-      prompt: "Get value",
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ value: 42 }) }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: {
+          inputTokens: {
+            total: undefined,
+            noCache: undefined,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
+          outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+        },
+        warnings: [],
+      }),
     });
+
+    const result = await generateStructured({ model, schema, prompt: "Get value" });
 
     expect(result.usage.inputTokens).toBe(0);
     expect(result.usage.outputTokens).toBe(0);
   });
 
-  it("passes abort signal to generateObject", async () => {
+  it("passes the abort signal to generateText", async () => {
     const schema = z.object({ done: z.boolean() });
     const controller = new AbortController();
 
-    mockGenerateObject.mockResolvedValue(
-      createMockResult({ done: true }, { inputTokens: 10, outputTokens: 5 })
-    );
-
-    await generateStructured({
-      model: mockModel,
-      schema,
-      prompt: "Check",
-      signal: controller.signal,
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        expect(options.abortSignal).toBe(controller.signal);
+        return {
+          content: [{ type: "text", text: JSON.stringify({ done: true }) }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(10, 5),
+          warnings: [],
+        };
+      },
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0];
-    expect(callArgs).toBeDefined();
-    expect(callArgs![0].abortSignal).toBe(controller.signal);
+    await generateStructured({ model, schema, prompt: "Check", signal: controller.signal });
   });
 
-  it("passes maxTokens to generateObject", async () => {
+  it("maps maxTokens to the SDK's maxOutputTokens call param", async () => {
     const schema = z.object({ text: z.string() });
 
-    mockGenerateObject.mockResolvedValue(
-      createMockResult({ text: "hello" }, { inputTokens: 10, outputTokens: 5 })
-    );
-
-    await generateStructured({
-      model: mockModel,
-      schema,
-      prompt: "Get text",
-      maxTokens: 1000,
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        expect(options.maxOutputTokens).toBe(1000);
+        return {
+          content: [{ type: "text", text: JSON.stringify({ text: "hello" }) }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(10, 5),
+          warnings: [],
+        };
+      },
     });
 
-    const callArgs = mockGenerateObject.mock.calls[0];
-    expect(callArgs).toBeDefined();
-    expect(callArgs![0].maxOutputTokens).toBe(1000);
+    await generateStructured({ model, schema, prompt: "Get text", maxTokens: 1000 });
   });
 });
