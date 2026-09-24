@@ -105,7 +105,10 @@ describe("loadMcpTools", () => {
   it("closes already-opened clients before rethrowing when a later server fails to connect", async () => {
     class SpyTransport implements MCPTransport {
       closed = false;
-      constructor(private readonly real: MCPTransport) {}
+      private readonly real: MCPTransport;
+      constructor(real: MCPTransport) {
+        this.real = real;
+      }
       get supportsProtocolVersionDiscovery() {
         return this.real.supportsProtocolVersionDiscovery;
       }
