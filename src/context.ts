@@ -1,10 +1,13 @@
 import {
   generateText,
   pruneMessages,
+  type FilePart,
+  type ImagePart,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
   type PrepareStepFunction,
+  type TextPart,
   type ToolSet,
 } from "ai";
 import { splitTurns } from "./agent/history.js";
@@ -61,6 +64,33 @@ export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
   };
 }
 
+function placeholder(part: FilePart | ImagePart): TextPart {
+  const filename = part.type === "file" ? part.filename : undefined;
+  return {
+    type: "text",
+    text: `[attachment: ${part.mediaType ?? "unknown"}${filename ? ` ${filename}` : ""}]`,
+  };
+}
+
+/** Strips timestamps and replaces file/image parts with a placeholder so base64 payloads never reach the summariser. */
+function forSummaryPrompt({ timestamp: _timestamp, ...msg }: Message): ModelMessage {
+  if (msg.role === "user" && typeof msg.content !== "string") {
+    return {
+      ...msg,
+      content: msg.content.map((part) =>
+        part.type === "file" || part.type === "image" ? placeholder(part) : part
+      ),
+    };
+  }
+  if (msg.role === "assistant" && typeof msg.content !== "string") {
+    return {
+      ...msg,
+      content: msg.content.map((part) => (part.type === "file" ? placeholder(part) : part)),
+    };
+  }
+  return msg;
+}
+
 function zeroUsage(): LanguageModelUsage {
   return {
     inputTokens: 0,
@@ -102,7 +132,7 @@ export async function summarizeHistory(
   const result = await generateText({
     model: summarizeModel,
     system: instructions,
-    prompt: JSON.stringify(oldMessages.map(({ timestamp: _timestamp, ...rest }) => rest)),
+    prompt: JSON.stringify(oldMessages.map(forSummaryPrompt)),
   });
 
   const summaryMessage: Message = {

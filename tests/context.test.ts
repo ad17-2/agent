@@ -142,3 +142,36 @@ describe("summarizeHistory", () => {
     expect(toolCallId).toBe(resultToolCallId);
   });
 });
+
+describe("summarizeHistory attachments", () => {
+  it("replaces file and image parts with a short placeholder in the summariser prompt", async () => {
+    const base64 = "A".repeat(20_000);
+    const history: Message[] = [
+      {
+        role: "user",
+        content: [
+          { type: "file", data: base64, mediaType: "image/png" },
+          { type: "file", data: base64, mediaType: "text/csv", filename: "data.csv" },
+          { type: "image", image: base64, mediaType: "image/jpeg" },
+          { type: "text", text: "what is in these?" },
+        ],
+      },
+      { role: "assistant", content: "two files and a picture" },
+      { role: "user", content: "thanks" },
+      { role: "assistant", content: "welcome" },
+    ];
+    const model = summarizeModel();
+    const cfg: ContextConfig = { maxInputTokens: 1, summarize: { keepRecentTurns: 1 } };
+
+    await summarizeHistory(history, cfg, model);
+
+    const prompt = JSON.stringify(model.doGenerateCalls[0]!.prompt);
+    expect(prompt.length).toBeLessThan(2_000);
+    expect(prompt).not.toContain("AAAA");
+    expect(prompt).toContain("image/png");
+    expect(prompt).toContain("text/csv");
+    expect(prompt).toContain("data.csv");
+    expect(prompt).toContain("image/jpeg");
+    expect(prompt).toContain("what is in these?");
+  });
+});
