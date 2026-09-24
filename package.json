@@ -30,6 +30,7 @@
     "format": "biome format --write src tests examples",
     "format:check": "biome format src tests examples",
     "example:telemetry": "pnpm build && node examples/telemetry-console.ts",
+    "examples": "pnpm build && for f in basic-tools streaming attachments-and-history cost-and-context retry-and-timeouts mcp telemetry-console; do echo \"== examples/$f.ts\" && node examples/$f.ts || exit 1; done",
     "check:package": "bash scripts/check-package.sh",
     "prepublishOnly": "npm run build"
   },
