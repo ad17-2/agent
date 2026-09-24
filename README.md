@@ -717,24 +717,22 @@ const agent = createAgent({
 
 ### Error Handling
 
-The SDK provides typed errors for handling failures:
+`run()` throws `AgentError("API_ERROR")` when the run fails: a model call that still fails after retries, or a hook that throws. `stream()` does not throw: it yields an `error` event and a `complete` event with `stopReason: "error"`. Aborts and timeouts are results, not errors (`stopReason: "aborted"` / `"timeout"`). A failed tool call is not an error either: it is recorded in `toolsCalled` with its `error` message and the model sees the failure.
 
 ```typescript
 import { AgentError } from "@ad17-2/agent";
 
 try {
+  agent.importHistory(saved);
   const result = await agent.run("Hello");
 } catch (error) {
   if (AgentError.is(error)) {
     switch (error.code) {
       case "API_ERROR":
-        console.log("API call failed:", error.message);
+        console.log("Model call failed:", error.cause);
         break;
-      case "TOOL_EXECUTION":
-        console.log("Tool failed:", error.message);
-        break;
-      case "MAX_ITERATIONS":
-        console.log("Reached iteration limit");
+      case "INVALID_HISTORY":
+        console.log("Saved history has an unsupported version:", error.message);
         break;
       case "MCP_TOOL_CONFLICT":
         console.log("Two MCP servers exposed the same tool name:", error.message);
@@ -744,19 +742,13 @@ try {
 }
 ```
 
-`run()`/`stream()` no longer throw `AgentError("ABORTED")` on abort or timeout — those are returned as a result (`stopReason: "aborted"` / `"timeout"`) instead.
-
 #### Error Codes
 
-| Code | Description |
-|------|-------------|
-| `API_ERROR` | API call to the model failed |
-| `TOOL_EXECUTION` | Tool handler threw an error |
-| `TOOL_VALIDATION` | Tool input failed schema validation |
-| `TOOL_NOT_FOUND` | Referenced tool does not exist |
-| `MAX_ITERATIONS` | Exceeded maximum iterations |
-| `ABORTED` | Reserved; no longer thrown by `run()`/`stream()` (see above) |
-| `MCP_TOOL_CONFLICT` | Two MCP servers passed to `loadMcpTools` exposed the same tool name |
+| Code | Thrown by |
+|------|-----------|
+| `API_ERROR` | `run()`, when a model call fails after retries or a hook throws; `cause` is the original error |
+| `INVALID_HISTORY` | `importHistory()`, for a serialized history whose `version` is not 1 or 2 |
+| `MCP_TOOL_CONFLICT` | `loadMcpTools()`, when two servers expose the same tool name |
 
 ---
 

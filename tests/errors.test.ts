@@ -13,13 +13,13 @@ describe("AgentError", () => {
 
   it("includes cause when provided", () => {
     const cause = new Error("Original error");
-    const error = new AgentError("Wrapped error", "TOOL_EXECUTION", cause);
+    const error = new AgentError("Wrapped error", "API_ERROR", cause);
 
     expect(error.cause).toBe(cause);
   });
 
   it("is detects AgentError instances", () => {
-    const agentError = new AgentError("Test", "ABORTED");
+    const agentError = new AgentError("Test", "INVALID_HISTORY");
     const regularError = new Error("Test");
 
     expect(AgentError.is(agentError)).toBe(true);

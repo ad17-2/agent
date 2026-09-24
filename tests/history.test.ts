@@ -192,9 +192,14 @@ describe("v1 import", () => {
 });
 
 describe("history import version check", () => {
-  it("rejects an unknown version and names it", () => {
+  it("rejects an unknown version with INVALID_HISTORY and names it", () => {
     const history = new HistoryManager({ maxMessages: 20, ttlMs: 60_000 });
     const future = JSON.parse('{"version":3,"messages":[],"exportedAt":0}');
-    expect(() => history.import(future)).toThrow("Unsupported history version: 3");
+    expect(() => history.import(future)).toThrow(
+      expect.objectContaining({
+        code: "INVALID_HISTORY",
+        message: "Unsupported history version: 3",
+      })
+    );
   });
 });

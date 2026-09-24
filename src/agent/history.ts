@@ -121,7 +121,7 @@ export class HistoryManager {
     }
 
     if (serialized.version !== 2) {
-      throw new AgentError(`Unsupported history version: ${version}`, "TOOL_VALIDATION");
+      throw new AgentError(`Unsupported history version: ${version}`, "INVALID_HISTORY");
     }
 
     this.save(serialized.messages);
