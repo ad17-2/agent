@@ -26,8 +26,8 @@
     "test:watch": "vitest",
     "lint": "oxlint --type-aware src tests examples",
     "lint:fix": "oxlint --type-aware --fix src tests examples",
-    "format": "prettier --write src",
-    "format:check": "prettier --check src",
+    "format": "biome format --write src tests examples",
+    "format:check": "biome format src tests examples",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -47,6 +47,7 @@
     "@ai-sdk/mcp": "2.0.57",
     "@ai-sdk/otel": "1.0.113",
     "@ai-sdk/provider": "4.0.18",
+    "@biomejs/biome": "2.5.14",
     "@langfuse/otel": "5.11.1",
     "@langfuse/vercel-ai-sdk": "5.11.1",
     "@modelcontextprotocol/sdk": "1.30.1",
@@ -56,7 +57,6 @@
     "@types/node": "^26.6.2",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2002",
-    "prettier": "^3.7.4",
     "tsup": "8.5.1",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
