@@ -14,7 +14,12 @@ function usage(over: Partial<LanguageModelUsage> = {}): LanguageModelUsage {
   };
 }
 
-const price: ModelPrice = { inputPerMTok: 3, outputPerMTok: 15, cacheReadPerMTok: 0.3, cacheWritePerMTok: 3.75 };
+const price: ModelPrice = {
+  inputPerMTok: 3,
+  outputPerMTok: 15,
+  cacheReadPerMTok: 0.3,
+  cacheWritePerMTok: 3.75,
+};
 
 describe("costOf", () => {
   it("prices input and output tokens", () => {
@@ -73,7 +78,11 @@ describe("costOf", () => {
     const cost = costOf(
       {
         inputTokens: undefined,
-        inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+        inputTokenDetails: {
+          noCacheTokens: undefined,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined,
+        },
         outputTokens: undefined,
         outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
         totalTokens: undefined,
@@ -97,7 +106,13 @@ describe("sumCost", () => {
     const table: PriceTable = { "claude-sonnet-5": price };
     const steps = [
       { model: { modelId: "claude-sonnet-5" }, usage: usage() },
-      { model: { modelId: "claude-sonnet-5" }, usage: usage({ outputTokens: 100, outputTokenDetails: { textTokens: 100, reasoningTokens: 0 } }) },
+      {
+        model: { modelId: "claude-sonnet-5" },
+        usage: usage({
+          outputTokens: 100,
+          outputTokenDetails: { textTokens: 100, reasoningTokens: 0 },
+        }),
+      },
     ];
 
     const cost = sumCost(steps, table);

@@ -24,7 +24,10 @@ describe("wrapToolsWithCallbacks", () => {
     const wrapped = wrapToolsWithCallbacks({ cooperative }, new Map(), undefined, {});
 
     await expect(
-      wrapped.cooperative!.execute!({}, { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] })
+      wrapped.cooperative!.execute!(
+        {},
+        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
+      )
     ).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
@@ -49,7 +52,10 @@ describe("wrapToolsWithCallbacks", () => {
     const wrapped = wrapToolsWithCallbacks({ uncooperative }, new Map(), undefined, {});
 
     await expect(
-      wrapped.uncooperative!.execute!({}, { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] })
+      wrapped.uncooperative!.execute!(
+        {},
+        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
+      )
     ).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
@@ -70,10 +76,19 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ slow }, new Map(), undefined, {}, { toolTimeoutMs: 20 });
+    const wrapped = wrapToolsWithCallbacks(
+      { slow },
+      new Map(),
+      undefined,
+      {},
+      { toolTimeoutMs: 20 }
+    );
 
     await expect(
-      wrapped.slow!.execute!({}, { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] })
+      wrapped.slow!.execute!(
+        {},
+        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
+      )
     ).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
@@ -95,7 +110,10 @@ describe("wrapToolsWithCallbacks", () => {
 
     const wrapped = wrapToolsWithCallbacks({ fast }, new Map(), undefined, {});
 
-    await wrapped.fast!.execute!({}, { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] });
+    await wrapped.fast!.execute!(
+      {},
+      { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
+    );
 
     expect(sawAbort).toBe(false);
   });

@@ -5,7 +5,12 @@ import { generateStructured } from "../src/structured.js";
 
 function usage(inputTokens = 50, outputTokens = 25) {
   return {
-    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: undefined, cacheWrite: undefined },
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }
@@ -54,9 +59,15 @@ describe("generateStructured", () => {
 
     const userMessage = call!.prompt.find((m) => m.role === "user");
     expect(userMessage).toBeDefined();
-    const content = userMessage!.content as Array<{ type: string; mediaType?: string; data?: unknown }>;
+    const content = userMessage!.content as Array<{
+      type: string;
+      mediaType?: string;
+      data?: unknown;
+    }>;
 
-    expect(content.some((part) => part.type === "file" && part.mediaType === "image/png")).toBe(true);
+    expect(content.some((part) => part.type === "file" && part.mediaType === "image/png")).toBe(
+      true
+    );
     expect(content.every((part) => part.type !== "image")).toBe(true);
   });
 
@@ -68,7 +79,12 @@ describe("generateStructured", () => {
         content: [{ type: "text", text: JSON.stringify({ value: 42 }) }],
         finishReason: { unified: "stop", raw: "stop" },
         usage: {
-          inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+          inputTokens: {
+            total: undefined,
+            noCache: undefined,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
           outputTokens: { total: undefined, text: undefined, reasoning: undefined },
         },
         warnings: [],

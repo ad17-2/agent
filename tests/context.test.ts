@@ -6,7 +6,12 @@ import type { ContextConfig, Message } from "../src/types.js";
 
 function usage(inputTokens = 10, outputTokens = 5) {
   return {
-    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: undefined, cacheWrite: undefined },
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }
@@ -33,7 +38,14 @@ function buildTurns(count: number): Message[] {
     });
     messages.push({
       role: "tool",
-      content: [{ type: "tool-result", toolCallId: `call-${i}`, toolName: "lookup", output: { type: "text", value: `result ${i}` } }],
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: `call-${i}`,
+          toolName: "lookup",
+          output: { type: "text", value: `result ${i}` },
+        },
+      ],
     });
   }
   return messages;
@@ -112,7 +124,10 @@ describe("summarizeHistory", () => {
 
     // 1 summary message + last 2 turns (6 messages)
     expect(result.messages).toHaveLength(7);
-    expect(result.messages[0]).toMatchObject({ role: "assistant", content: "earlier turns summarized" });
+    expect(result.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "earlier turns summarized",
+    });
     expect(result.usage.inputTokens).toBe(10);
 
     // the kept turns must still contain matched tool-call/tool-result pairs, never split
@@ -120,8 +135,10 @@ describe("summarizeHistory", () => {
     expect(kept[0]).toMatchObject({ role: "user", content: "question 4" });
     expect(kept[1]).toMatchObject({ role: "assistant" });
     expect(kept[2]).toMatchObject({ role: "tool" });
-    const toolCallId = (kept[1] as { content: Array<{ toolCallId: string }> }).content[0]?.toolCallId;
-    const resultToolCallId = (kept[2] as { content: Array<{ toolCallId: string }> }).content[0]?.toolCallId;
+    const toolCallId = (kept[1] as { content: Array<{ toolCallId: string }> }).content[0]
+      ?.toolCallId;
+    const resultToolCallId = (kept[2] as { content: Array<{ toolCallId: string }> }).content[0]
+      ?.toolCallId;
     expect(toolCallId).toBe(resultToolCallId);
   });
 });

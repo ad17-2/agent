@@ -12,14 +12,22 @@ const fixturePath = fileURLToPath(new URL("./fixtures/mcp-server.mjs", import.me
 function echoServer(name: string, prefix?: string) {
   return {
     name,
-    transport: new Experimental_StdioMCPTransport({ command: process.execPath, args: [fixturePath] }),
+    transport: new Experimental_StdioMCPTransport({
+      command: process.execPath,
+      args: [fixturePath],
+    }),
     prefix,
   };
 }
 
 function usage(inputTokens = 10, outputTokens = 20) {
   return {
-    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: undefined, cacheWrite: undefined },
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }
@@ -72,7 +80,9 @@ describe("loadMcpTools", () => {
   });
 
   it("throws MCP_TOOL_CONFLICT when two servers expose the same tool name", async () => {
-    await expect(loadMcpTools([echoServer("server-a"), echoServer("server-b")])).rejects.toThrow(AgentError);
+    await expect(loadMcpTools([echoServer("server-a"), echoServer("server-b")])).rejects.toThrow(
+      AgentError
+    );
 
     try {
       await loadMcpTools([echoServer("server-a"), echoServer("server-b")]);
@@ -102,7 +112,10 @@ describe("loadMcpTools", () => {
       start() {
         return this.real.start();
       }
-      send(message: Parameters<MCPTransport["send"]>[0], options?: Parameters<MCPTransport["send"]>[1]) {
+      send(
+        message: Parameters<MCPTransport["send"]>[0],
+        options?: Parameters<MCPTransport["send"]>[1]
+      ) {
         return this.real.send(message, options);
       }
       async close(options?: Parameters<MCPTransport["close"]>[0]) {

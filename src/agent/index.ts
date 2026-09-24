@@ -62,7 +62,9 @@ function buildToolCallRecords(
 ): ToolCallRecord[] {
   const errorsById = new Map(
     step.content
-      .filter((part): part is Extract<typeof part, { type: "tool-error" }> => part.type === "tool-error")
+      .filter(
+        (part): part is Extract<typeof part, { type: "tool-error" }> => part.type === "tool-error"
+      )
       .map((part) => [part.toolCallId, part])
   );
   const resultsById = new Map(step.toolResults.map((result) => [result.toolCallId, result]));
@@ -109,7 +111,14 @@ async function* driveStream<T extends { fullStream: AsyncIterable<TextStreamPart
       retryOptions.logger?.(`Stream attempt ${attempt} failed before first event, retrying`, {
         error: err.message,
       });
-      await sleep(calculateBackoff(attempt, retryOptions.backoff, retryOptions.initialDelayMs, retryOptions.maxDelayMs));
+      await sleep(
+        calculateBackoff(
+          attempt,
+          retryOptions.backoff,
+          retryOptions.initialDelayMs,
+          retryOptions.maxDelayMs
+        )
+      );
     }
   }
 }
@@ -211,11 +220,16 @@ export function createAgent(options: AgentOptions): Agent {
     const { messages, usage } = await summarizeHistory(historyManager.get(), contextConfig, model);
     historyManager.save(messages);
 
-    log("info", "History summarized", { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
+    log("info", "History summarized", {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
 
     return {
       extraUsage: toTokenUsage(usage),
-      extraCost: pricing ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing) : undefined,
+      extraCost: pricing
+        ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing)
+        : undefined,
     };
   }
 
@@ -246,7 +260,9 @@ export function createAgent(options: AgentOptions): Agent {
   function resolveSignal(runOptions: RunOptions | undefined) {
     const { signal: userSignal, timeoutMs } = runOptions ?? {};
     const effectiveTimeout = timeoutMs ?? timeoutConfig?.runTimeoutMs;
-    const signal = effectiveTimeout ? createTimeoutSignal(effectiveTimeout, userSignal) : userSignal;
+    const signal = effectiveTimeout
+      ? createTimeoutSignal(effectiveTimeout, userSignal)
+      : userSignal;
     return signal;
   }
 
@@ -303,7 +319,12 @@ export function createAgent(options: AgentOptions): Agent {
         );
 
         const usage = addUsage(toTokenUsage(result.usage), extraUsage);
-        const stopReason = toStopReason(result.finishReason, result.steps, maxIterations, undefined);
+        const stopReason = toStopReason(
+          result.finishReason,
+          result.steps,
+          maxIterations,
+          undefined
+        );
 
         historyManager.append(userMessage, result.responseMessages);
 

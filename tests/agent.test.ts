@@ -9,7 +9,12 @@ import type { AgentResult, SerializedHistory, SerializedHistoryV1 } from "../src
 
 function usage(inputTokens = 10, outputTokens = 20) {
   return {
-    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: undefined, cacheWrite: undefined },
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }
@@ -106,7 +111,12 @@ describe("createAgent", () => {
 
     const model = mockModel(async () => ({
       content: [
-        { type: "tool-call", toolCallId: "call-1", toolName: "echo", input: JSON.stringify({ value: "hi" }) },
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "echo",
+          input: JSON.stringify({ value: "hi" }),
+        },
       ],
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: usage(),
@@ -132,7 +142,12 @@ describe("createAgent", () => {
     const model = mockModel([
       {
         content: [
-          { type: "tool-call", toolCallId: "call-1", toolName: "greet", input: JSON.stringify({ name: "World" }) },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "greet",
+            input: JSON.stringify({ name: "World" }),
+          },
         ],
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: usage(),
@@ -224,7 +239,12 @@ describe("createAgent", () => {
     const model = mockModel([
       {
         content: [
-          { type: "tool-call", toolCallId: "call-1", toolName: "greet", input: JSON.stringify({ name: "World" }) },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "greet",
+            input: JSON.stringify({ name: "World" }),
+          },
         ],
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: usage(),

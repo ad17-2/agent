@@ -13,7 +13,12 @@ const TINY_PNG_BASE64 =
 
 function usage(inputTokens: number, outputTokens: number) {
   return {
-    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: undefined, cacheWrite: undefined },
+    inputTokens: {
+      total: inputTokens,
+      noCache: inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
 }

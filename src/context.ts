@@ -24,7 +24,10 @@ function charsOf(messages: ReadonlyArray<ModelMessage>): number {
 }
 
 /** chars/4 token estimate; pass `charsPerToken` to calibrate against a real usage.inputTokens measurement. */
-export function estimateTokens(messages: ReadonlyArray<ModelMessage>, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number {
+export function estimateTokens(
+  messages: ReadonlyArray<ModelMessage>,
+  charsPerToken = DEFAULT_CHARS_PER_TOKEN
+): number {
   return Math.ceil(charsOf(messages) / charsPerToken);
 }
 

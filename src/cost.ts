@@ -12,8 +12,10 @@ export function costOf(usage: LanguageModelUsage, price: ModelPrice): Cost {
 
   const inputUsd = (noCacheTokens / PER_MILLION) * price.inputPerMTok;
   const outputUsd = (outputTokens / PER_MILLION) * price.outputPerMTok;
-  const cacheReadUsd = (cacheReadTokens / PER_MILLION) * (price.cacheReadPerMTok ?? price.inputPerMTok);
-  const cacheWriteUsd = (cacheWriteTokens / PER_MILLION) * (price.cacheWritePerMTok ?? price.inputPerMTok);
+  const cacheReadUsd =
+    (cacheReadTokens / PER_MILLION) * (price.cacheReadPerMTok ?? price.inputPerMTok);
+  const cacheWriteUsd =
+    (cacheWriteTokens / PER_MILLION) * (price.cacheWritePerMTok ?? price.inputPerMTok);
 
   return {
     inputUsd,

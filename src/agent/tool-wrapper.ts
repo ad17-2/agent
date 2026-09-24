@@ -31,7 +31,8 @@ export function wrapToolsWithCallbacks(
       continue;
     }
 
-    const toolTimeoutMs = (tool as { timeoutMs?: number }).timeoutMs ?? timeoutConfig?.toolTimeoutMs;
+    const toolTimeoutMs =
+      (tool as { timeoutMs?: number }).timeoutMs ?? timeoutConfig?.toolTimeoutMs;
 
     wrapped[name] = {
       ...tool,
@@ -57,7 +58,11 @@ export function wrapToolsWithCallbacks(
               execution,
               new Promise<never>((_resolve, reject) => {
                 const abort = () =>
-                  reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
+                  reject(
+                    signal.reason instanceof Error
+                      ? signal.reason
+                      : new Error(String(signal.reason))
+                  );
                 if (signal.aborted) abort();
                 else signal.addEventListener("abort", abort, { once: true });
               }),
