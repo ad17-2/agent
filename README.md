@@ -87,7 +87,7 @@ const result = await agent.run("Hello!");
 | `maxTokens` | `number` | No | `4096` | Maximum output tokens per response |
 | `conversation` | `ConversationConfig` | No | - | Conversation history settings |
 | `thinking` | `ThinkingConfig` | No | - | Extended thinking configuration |
-| `providerOptions` | `ProviderOptions` | No | - | Provider-specific call options, merged over `thinking` |
+| `providerOptions` | `ProviderOptions` | No | - | Provider-specific call options, merged per provider key over `thinking` (so `anthropic.thinking` survives extra `anthropic` options) |
 | `retry` | `RetryConfig` | No | - | Retry configuration with backoff |
 | `timeout` | `TimeoutConfig` | No | - | Timeout configuration |
 | `pricing` | `PriceTable` | No | - | Per-model USD pricing; enables `result.cost` |
@@ -106,7 +106,7 @@ const result = await agent.run("Hello!");
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `maxMessages` | `number` | `20` | Maximum messages to retain in history |
+| `maxMessages` | `number` | `20` | Maximum messages to retain in history. Eviction drops whole turns (a turn starts at a user message), oldest first, so a tool result is never separated from its tool call and history always starts with a user message. The newest turn is always kept, even when it alone exceeds the cap |
 | `ttlMs` | `number` | `600000` | Time-to-live for history (10 minutes) |
 
 #### ThinkingConfig
@@ -126,7 +126,7 @@ const result = await agent.run("Hello!");
 | `maxDelayMs` | `number` | `30000` | Maximum delay between retries |
 | `retryOn` | `(error) => boolean` | `() => true` | Predicate to determine if error is retryable |
 
-`retry` is the only retry layer: the SDK's own retries are disabled (`maxRetries: 0`) so a failure is retried at most `maxAttempts` times, not up to `maxAttempts * (SDK retries + 1)`. `stream()` retries only until the first event is yielded; once output has started, a failure is returned as `stopReason: "error"` plus an `error` event, since replaying would duplicate text the caller already saw.
+`retry` is the only retry layer: the SDK's own retries are disabled (`maxRetries: 0`) and the package's retry runs as a language-model middleware around each single model call, so a transient failure on step 2 re-issues only that call: step 1's tools are not re-executed and `toolsCalled` is not duplicated. Failed attempts contribute no usage (a rejected call reports none). For `stream()`, a call is retried only while nothing past the provider's `stream-start` has been delivered; once output has started, a failure is returned as `stopReason: "error"` plus an `error` event, since replaying would duplicate text the caller already saw. Nothing is retried, and no backoff sleep runs, once the run timeout or the caller's signal has fired.
 
 #### TimeoutConfig
 
@@ -156,7 +156,7 @@ const result = await agent.run("Hello!");
 | `cost` | `Cost` \| `undefined` | Present only when `pricing` is set ([details](#cost-tracking)) |
 | `thinking` | `string` | Extended thinking output (if enabled) |
 
-`aborted` and `timeout` are returned as a result (with empty `message` and zero `usage`), never thrown.
+`aborted` and `timeout` are returned as a result (with empty `message` and zero `usage`), never thrown. Which one you get depends on which signal fired: the run timeout (`timeout.runTimeoutMs` / `RunOptions.timeoutMs`) yields `timeout` and calls `onError` with `phase: "timeout"`; the caller's `RunOptions.signal` yields `aborted` and calls no `onError`. Error message text is never used to tell them apart, so an API error that happens to say "timed out" is still thrown as `AgentError("API_ERROR")`. A run ended by either signal appends nothing to history.
 
 #### TokenUsage
 
@@ -235,6 +235,8 @@ for await (const event of agent.stream("Search for TypeScript tutorials")) {
   }
 }
 ```
+
+Breaking out of the `for await` loop cancels the underlying model request (tokens stop streaming and billing) and appends nothing to history: the partial turn is discarded, so the next `run()`/`stream()` continues from the last completed turn. A mid-stream abort or timeout ends the stream with a `complete` event whose `result.stopReason` is `"aborted"` or `"timeout"`; no `error` event is emitted and `onError` is not called with `phase: "api"`.
 
 #### AgentEvent Types
 
@@ -369,8 +371,8 @@ const agent = createAgent({
 
 Two mechanisms work together:
 
-- **`prepareStep` trimming**, active on every model call within a run: once the estimated tokens for a step's messages exceed `maxInputTokens`, reasoning and tool call/result content is pruned (via the SDK's `pruneMessages`) from everything but the last message.
-- **Between-turn summarization**, run before a `run()`/`stream()` call whose stored history is already over budget: every turn except the most recent `keepRecentTurns` is summarized into one assistant message via `generateText`, cutting only at turn boundaries so a tool call is never separated from its result. The summary call's own usage (and cost, when `pricing` is set) is folded into that run's `usage`/`cost`.
+- **`prepareStep` trimming**, active on every model call within a run: once the estimated tokens for a step's messages exceed `maxInputTokens`, reasoning and tool call/result content is pruned (via the SDK's `pruneMessages`) from the history that precedes the current run's user message. The current run's own messages are never touched, so thinking blocks and tool calls the provider needs returned unchanged stay intact. The chars-per-token ratio is calibrated from the previous step's own prompt and measured `inputTokens`, and reset at the start of every run; instructions and tool schemas are not in the char count, so the estimate errs on the conservative side.
+- **Between-turn summarization**, run before a `run()`/`stream()` call whose stored history is already over budget: every turn except the most recent `keepRecentTurns` is summarized via `generateText` into one leading user message (`Summary of earlier conversation: ...`), cutting only at turn boundaries so a tool call is never separated from its result and history still starts with a user message. File and image parts are replaced with a short `[attachment: <mediaType> <filename>]` placeholder in the summarizer prompt, so base64 payloads are never sent to it. The summary call's own usage (and cost, when `pricing` is set) is folded into that run's `usage`/`cost`.
 
 #### ContextConfig
 
@@ -498,7 +500,7 @@ const agent = createAgent({
 |-------|-------------|
 | `tool` | Error occurred during tool execution |
 | `api` | Error occurred during API call |
-| `timeout` | Request timed out |
+| `timeout` | The run timeout fired (the result has `stopReason: "timeout"`) |
 
 ---
 
@@ -651,11 +653,13 @@ const result = await agent.run("Do something", {
 });
 ```
 
+A run timeout returns `stopReason: "timeout"` and calls `onError` with `phase: "timeout"`; a caller abort via `RunOptions.signal` returns `stopReason: "aborted"` without an `onError` call. The timer is cleared as soon as the run ends, so a finished run does not keep the process alive.
+
 ---
 
 ### Retry Configuration
 
-Configure automatic retry with backoff strategies:
+Configure automatic retry with backoff strategies. Retries apply to each model call individually (see [RetryConfig](#retryconfig)):
 
 ```typescript
 const agent = createAgent({
