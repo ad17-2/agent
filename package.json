@@ -1,6 +1,6 @@
 {
   "name": "@ad17-2/agent",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Lightweight agentic loop for Claude powered by Vercel AI SDK",
   "type": "module",
   "main": "./dist/index.js",
