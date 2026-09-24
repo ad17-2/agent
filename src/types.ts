@@ -1,7 +1,14 @@
-import type { LanguageModel, ModelMessage, TelemetryOptions, Tool, ToolSet } from "ai";
+import type {
+  LanguageModel,
+  ModelMessage,
+  TelemetryOptions,
+  Tool,
+  ToolLoopAgentSettings,
+  ToolSet,
+} from "ai";
 
-/** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`. */
-export type ProviderOptions = Record<string, Record<string, unknown>>;
+/** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`; the SDK's own type (JSON values only). */
+export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 

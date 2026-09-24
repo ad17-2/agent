@@ -15,6 +15,7 @@ import type {
   AgentResult,
   Cost,
   Message,
+  ProviderOptions,
   RetryConfig,
   RunOptions,
   SerializedHistory,
@@ -102,6 +103,15 @@ function resolveModel(model: LanguageModel) {
     : model;
 }
 
+/** Merges per provider key, so caller options under `anthropic` do not wipe the `thinking` entry. */
+function mergeProviderOptions(base: ProviderOptions, extra: ProviderOptions): ProviderOptions {
+  const merged: ProviderOptions = { ...base };
+  for (const [provider, options] of Object.entries(extra)) {
+    merged[provider] = { ...merged[provider], ...options };
+  }
+  return merged;
+}
+
 function signalResult(
   stopReason: "aborted" | "timeout",
   toolsCalled: ToolCallRecord[],
@@ -181,7 +191,7 @@ export function createAgent(options: AgentOptions): Agent {
 
   const providerOptions =
     thinkingProviderOptions || extraProviderOptions
-      ? { ...thinkingProviderOptions, ...extraProviderOptions }
+      ? mergeProviderOptions(thinkingProviderOptions ?? {}, extraProviderOptions ?? {})
       : undefined;
 
   // functionId groups telemetry data by function in the exporter's UI; default it to traceId when unset.
