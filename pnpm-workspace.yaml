@@ -1,31 +1,32 @@
 allowBuilds:
   esbuild: true
-# pnpm 12's default release-age gate stays on for every future bump. Excluded are
-# only the packages the design pins to the 2026-09-23 releases: ai 7.0.113 and its
-# @ai-sdk companions, the MCP SDK (and its hono dependency) the test fixture runs,
-# and tsdown's rolldown bundler with its platform bindings.
+# pnpm 12's default release-age gate stays on for every future bump. Each exclusion is
+# pinned to the exact version the design pins (the 2026-09-23 releases): ai 7.0.113 and its
+# @ai-sdk companions, the MCP SDK (and its hono dependency) the test fixture runs, and
+# tsdown's rolldown bundler with its platform bindings. A newer version of any of these
+# is gated like everything else until it is old enough.
 minimumReleaseAgeExclude:
-  - ai
-  - "@ai-sdk/anthropic"
-  - "@ai-sdk/gateway"
-  - "@ai-sdk/mcp"
-  - "@ai-sdk/otel"
-  - "@ai-sdk/provider-utils"
-  - "@modelcontextprotocol/sdk"
-  - hono
-  - rolldown
-  - "@rolldown/binding-android-arm-eabi"
-  - "@rolldown/binding-android-arm64"
-  - "@rolldown/binding-darwin-arm64"
-  - "@rolldown/binding-darwin-x64"
-  - "@rolldown/binding-freebsd-x64"
-  - "@rolldown/binding-linux-arm-gnueabihf"
-  - "@rolldown/binding-linux-arm64-gnu"
-  - "@rolldown/binding-linux-arm64-musl"
-  - "@rolldown/binding-linux-ppc64-gnu"
-  - "@rolldown/binding-linux-s390x-gnu"
-  - "@rolldown/binding-linux-x64-gnu"
-  - "@rolldown/binding-linux-x64-musl"
-  - "@rolldown/binding-openharmony-arm64"
-  - "@rolldown/binding-win32-arm64-msvc"
-  - "@rolldown/binding-win32-x64-msvc"
+  - ai@7.0.113
+  - "@ai-sdk/anthropic@4.0.62"
+  - "@ai-sdk/gateway@4.0.91"
+  - "@ai-sdk/mcp@2.0.57"
+  - "@ai-sdk/otel@1.0.113"
+  - "@ai-sdk/provider-utils@5.0.47"
+  - "@modelcontextprotocol/sdk@1.30.1"
+  - hono@4.13.9
+  - rolldown@1.2.10
+  - "@rolldown/binding-android-arm-eabi@1.2.10"
+  - "@rolldown/binding-android-arm64@1.2.10"
+  - "@rolldown/binding-darwin-arm64@1.2.10"
+  - "@rolldown/binding-darwin-x64@1.2.10"
+  - "@rolldown/binding-freebsd-x64@1.2.10"
+  - "@rolldown/binding-linux-arm-gnueabihf@1.2.10"
+  - "@rolldown/binding-linux-arm64-gnu@1.2.10"
+  - "@rolldown/binding-linux-arm64-musl@1.2.10"
+  - "@rolldown/binding-linux-ppc64-gnu@1.2.10"
+  - "@rolldown/binding-linux-s390x-gnu@1.2.10"
+  - "@rolldown/binding-linux-x64-gnu@1.2.10"
+  - "@rolldown/binding-linux-x64-musl@1.2.10"
+  - "@rolldown/binding-openharmony-arm64@1.2.10"
+  - "@rolldown/binding-win32-arm64-msvc@1.2.10"
+  - "@rolldown/binding-win32-x64-msvc@1.2.10"
