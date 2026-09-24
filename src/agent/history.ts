@@ -40,8 +40,10 @@ function textOf(content: string | unknown[]): string {
       (block): block is { type: "text"; text: string } =>
         typeof block === "object" &&
         block !== null &&
-        (block as { type?: unknown }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string"
+        "type" in block &&
+        block.type === "text" &&
+        "text" in block &&
+        typeof block.text === "string"
     )
     .map((block) => block.text)
     .join("\n");
@@ -111,6 +113,7 @@ export class HistoryManager {
   }
 
   import(serialized: SerializedHistory | SerializedHistoryV1): void {
+    const version: number = serialized.version;
     if (serialized.version === 1) {
       this.save(fromV1(serialized));
       this.onLog?.(`History imported (v1 -> v2): ${this.messages.length} messages`);
@@ -118,10 +121,7 @@ export class HistoryManager {
     }
 
     if (serialized.version !== 2) {
-      throw new AgentError(
-        `Unsupported history version: ${(serialized as { version: number }).version}`,
-        "TOOL_VALIDATION"
-      );
+      throw new AgentError(`Unsupported history version: ${version}`, "TOOL_VALIDATION");
     }
 
     this.save(serialized.messages);

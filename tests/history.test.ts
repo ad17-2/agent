@@ -201,3 +201,11 @@ describe("v1 import", () => {
     expect(prompt[2]?.content).toEqual([{ type: "text", text: "Here\nit is." }]);
   });
 });
+
+describe("history import version check", () => {
+  it("rejects an unknown version and names it", () => {
+    const history = new HistoryManager({ maxMessages: 20, ttlMs: 60_000 });
+    const future = JSON.parse('{"version":3,"messages":[],"exportedAt":0}');
+    expect(() => history.import(future)).toThrow("Unsupported history version: 3");
+  });
+});
