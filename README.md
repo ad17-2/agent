@@ -500,9 +500,11 @@ const agent = createAgent({
 
 | Phase | Description |
 |-------|-------------|
-| `tool` | Error occurred during tool execution |
+| `tool` | Error occurred during tool execution, including a per-tool `timeoutMs` / `toolTimeoutMs` expiry |
 | `api` | Error occurred during API call |
 | `timeout` | The run timeout fired (the result has `stopReason: "timeout"`) |
+
+A tool cut off by the run's own signal (the run timeout or the caller's `RunOptions.signal`) is not also reported with `phase: "tool"`: a run timeout calls `onError` once, with `phase: "timeout"`, and a caller abort calls it not at all.
 
 ---
 

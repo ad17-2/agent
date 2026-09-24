@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
+import { z } from "zod";
+import { defineTool } from "../src/tool.js";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import type { AgentEvent } from "../src/types.js";
@@ -196,6 +198,35 @@ describe("in-flight abort and timeout", () => {
 
     expect(result.stopReason).toBe("aborted");
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("run(): a tool cut off by the run timeout is reported once, as the timeout, not also as a tool error", async () => {
+    const onError = vi.fn();
+    const ignoresSignal = defineTool({
+      description: "never checks its signal",
+      schema: z.object({}),
+      handler: () => new Promise(() => {}),
+    });
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "tool-call", toolCallId: "t1", toolName: "slow", input: "{}" }],
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: usage(),
+        warnings: [],
+      }),
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: { slow: ignoresSignal },
+      onError,
+    });
+
+    const result = await agent.run("go", { timeoutMs: 30 });
+
+    expect(result.stopReason).toBe("timeout");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), { phase: "timeout" });
   });
 
   it("leaves no timer behind after a run that finishes before its timeout", async () => {

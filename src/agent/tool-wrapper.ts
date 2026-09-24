@@ -79,8 +79,11 @@ export function wrapToolsWithCallbacks(
         } catch (error) {
           const errorObj = error instanceof Error ? error : new Error(String(error));
           timings.set(toolCallId, Date.now() - start);
-          logger?.error(`Tool error: ${name}`, { error: errorObj.message });
-          await onError?.(errorObj, { phase: "tool", toolName: name });
+          // Cut off by the run's own signal (timeout or abort): the run reports that once, not the tool.
+          if (!execOptions?.abortSignal?.aborted) {
+            logger?.error(`Tool error: ${name}`, { error: errorObj.message });
+            await onError?.(errorObj, { phase: "tool", toolName: name });
+          }
           throw errorObj;
         }
       },
