@@ -56,6 +56,7 @@ console.log(result.usage); // { inputTokens, outputTokens, totalTokens, cacheRea
 - **`AgentResult.stopReason` values are now accurate.** `max_tokens` (the output-token cap) and `max_iterations` (the step cap) were previously conflated; `content_filter`, `aborted`, `timeout`, and `other` are now real, reachable values instead of being thrown as `AgentError("ABORTED")`. See [StopReason](#agentresult) below.
 - **`TokenUsage` gained fields.** `cacheReadTokens`, `cacheWriteTokens`, and `reasoningTokens` are now populated (previously always `0` or absent).
 - **Tool call timeouts now abort the tool's `signal`**, not just race it — see [Timeout Configuration](#timeout-configuration).
+- **`retry.retryOn` no longer defaults to retrying everything.** The default follows the provider's own classification (429, 5xx, overloaded, failed connections); a 400 or 401 is attempted once. Pass your own `retryOn` to keep the old behaviour — see [RetryConfig](#retryconfig).
 
 ## API Reference
 
@@ -188,6 +189,8 @@ localStorage.setItem("agent-history", JSON.stringify(history));
 const saved = JSON.parse(localStorage.getItem("agent-history"));
 agent.importHistory(saved);
 ```
+
+One agent instance supports overlapping `run()`/`stream()` calls: each call resolves its own model, retry state and context-trimming calibration. Conversation history is the one shared thing: a run reads it when it starts and appends its own turn when it finishes, so overlapping runs do not see each other's turn and the stored order is completion order. Run calls sequentially when a turn must build on the previous one.
 
 ---
 
