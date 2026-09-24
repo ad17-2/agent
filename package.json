@@ -20,7 +20,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && tsc --noEmit -p examples/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -57,7 +57,7 @@
     "@types/node": "^26.6.2",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2002",
-    "tsup": "8.5.1",
+    "tsdown": "0.23.0",
     "tsx": "^4.23.15",
     "typescript": "7.0.2",
     "vitest": "^5.0.1"
