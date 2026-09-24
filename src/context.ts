@@ -117,8 +117,9 @@ export interface SummarizeResult {
 
 /**
  * Run between turns, before a run whose history exceeds the budget. Summarizes every turn except
- * the most recent `keepRecentTurns` into one leading user message via `generateText`, cutting only
- * at turn boundaries. Returns the summary's usage so the caller can fold it into the run's own usage/cost.
+ * the most recent `keepRecentTurns` into one leading user message via a single `generateText` call
+ * on `model` (no SDK retries: wrap the model if you want any), cutting only at turn boundaries.
+ * Returns the summary's usage so the caller can fold it into the run's own usage/cost.
  */
 export async function summarizeHistory(
   history: Message[],
@@ -127,7 +128,6 @@ export async function summarizeHistory(
   options: { abortSignal?: AbortSignal } = {}
 ): Promise<SummarizeResult> {
   const keepRecentTurns = cfg.summarize?.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS;
-  const summarizeModel = cfg.summarize?.model ?? model;
   const instructions = cfg.summarize?.instructions ?? DEFAULT_SUMMARIZE_INSTRUCTIONS;
 
   const turns = splitTurns(history);
@@ -140,10 +140,11 @@ export async function summarizeHistory(
   const recentMessages = turns.slice(cutIndex).flat();
 
   const result = await generateText({
-    model: summarizeModel,
+    model,
     instructions,
     prompt: JSON.stringify(oldMessages.map(forSummaryPrompt)),
     abortSignal: options.abortSignal,
+    maxRetries: 0,
   });
 
   const summaryMessage: Message = {

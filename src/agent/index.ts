@@ -188,10 +188,13 @@ export function createAgent(options: AgentOptions): Agent {
     ...retry,
     logger: (msg, meta) => log("warn", msg, meta),
   };
-  const model = wrapLanguageModel({
-    model: resolveModel(modelOption),
-    middleware: retryMiddleware(retryOptions),
-  });
+  /** Built per call: a string id resolves like the SDK does, at call time, so a provider registered later is honoured. */
+  function callModel(model: LanguageModel) {
+    return wrapLanguageModel({
+      model: resolveModel(model),
+      middleware: retryMiddleware(retryOptions),
+    });
+  }
 
   const thinkingProviderOptions = thinking?.enabled
     ? {
@@ -212,15 +215,20 @@ export function createAgent(options: AgentOptions): Agent {
     : undefined;
 
   const sdkAgent = new ToolLoopAgent({
-    model,
+    model: modelOption,
     instructions: systemPrompt,
     tools: wrappedTools,
     stopWhen: stepCountIs(maxIterations),
     maxOutputTokens: maxTokens,
     maxRetries: 0,
     providerOptions,
-    prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
     telemetry,
+    // Per call: the model is resolved and wrapped now, and trimForStep's calibration is this run's own.
+    prepareCall: (call) => ({
+      ...call,
+      model: callModel(modelOption),
+      prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+    }),
   });
 
   /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
@@ -231,10 +239,13 @@ export function createAgent(options: AgentOptions): Agent {
       return { extraUsage: zeroUsage() };
     }
 
-    const summarizeModel = contextConfig.summarize?.model ?? model;
-    const { messages, usage } = await summarizeHistory(historyManager.get(), contextConfig, model, {
-      abortSignal,
-    });
+    const summarizeModel = callModel(contextConfig.summarize?.model ?? modelOption);
+    const { messages, usage } = await summarizeHistory(
+      historyManager.get(),
+      contextConfig,
+      summarizeModel,
+      { abortSignal }
+    );
     historyManager.save(messages);
 
     log("info", "History summarized", {

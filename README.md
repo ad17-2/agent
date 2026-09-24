@@ -80,7 +80,7 @@ const result = await agent.run("Hello!");
 
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
-| `model` | `LanguageModel` | Yes | - | Vercel AI SDK language model instance |
+| `model` | `LanguageModel` | Yes | - | Vercel AI SDK language model instance, or a `provider:model` id string, resolved on every call like the SDK does (through `globalThis.AI_SDK_DEFAULT_PROVIDER`, else the gateway), so a provider registered after `createAgent` is honoured |
 | `systemPrompt` | `string` | Yes | - | System prompt for the agent |
 | `tools` | `Record<string, Tool>` | Yes | - | Map of tool names to tool definitions |
 | `maxIterations` | `number` | No | `10` | Maximum tool-calling iterations per run |
@@ -128,7 +128,7 @@ const result = await agent.run("Hello!");
 
 An explicit `undefined` for any field takes that field's default.
 
-`retry` is the only retry layer: the SDK's own retries are disabled (`maxRetries: 0`) and the package's retry runs as a language-model middleware around each single model call, so a transient failure on step 2 re-issues only that call: step 1's tools are not re-executed and `toolsCalled` is not duplicated. Failed attempts contribute no usage (a rejected call reports none). For `stream()`, a call is retried only while no content part (text, reasoning, tool call, file or source) has been delivered; provider metadata such as Anthropic's `message_start` does not count, so an `overloaded_error` right after it is still retried. The failed attempt's stream is cancelled before the next one starts. Once output has started, a failure is returned as `stopReason: "error"` plus an `error` event, since replaying would duplicate text the caller already saw. Nothing is retried, and no backoff sleep runs, once the run timeout or the caller's signal has fired.
+`retry` is the only retry layer for every model call `createAgent` makes, the steps of `run()`/`stream()` and the history summariser alike (a custom `summarize.model` is wrapped the same way): the SDK's own retries are disabled (`maxRetries: 0`) and the package's retry runs as a language-model middleware around each single model call, so a transient failure on step 2 re-issues only that call: step 1's tools are not re-executed and `toolsCalled` is not duplicated. `generateStructured` is the exception: it takes a raw model and no `retry`, so it keeps the SDK's default retries (up to 2, only for errors the provider marks retryable). Failed attempts contribute no usage (a rejected call reports none). For `stream()`, a call is retried only while no content part (text, reasoning, tool call, file or source) has been delivered; provider metadata such as Anthropic's `message_start` does not count, so an `overloaded_error` right after it is still retried. The failed attempt's stream is cancelled before the next one starts. Once output has started, a failure is returned as `stopReason: "error"` plus an `error` event, since replaying would duplicate text the caller already saw. Nothing is retried, and no backoff sleep runs, once the run timeout or the caller's signal has fired.
 
 #### TimeoutConfig
 
@@ -385,7 +385,7 @@ Two mechanisms work together:
 | `summarize.keepRecentTurns` | `number` | `4` | Turns kept verbatim; everything older is summarized |
 | `summarize.instructions` | `string` | a generic summarization prompt | System prompt for the summarization call |
 
-`estimateTokens`, `trimForStep`, and `summarizeHistory` are also exported directly for use with a raw `ToolLoopAgent`.
+`estimateTokens`, `trimForStep`, and `summarizeHistory` are also exported directly for use with a raw `ToolLoopAgent`. `summarizeHistory(history, cfg, model)` makes one `generateText` call on `model` with `maxRetries: 0` (it does not read `cfg.summarize.model`; `createAgent` picks that for it), so wrap the model yourself if you want retries. `trimForStep(cfg)` returns a `prepareStep` whose calibration state belongs to that function: build one per run.
 
 ---
 
@@ -564,7 +564,7 @@ const fetchTool = defineTool({
 
 ### `generateStructured(options)`
 
-Extracts typed data from LLM responses using Zod schemas, built on `generateText({ output: Output.object({ schema }) })`.
+Extracts typed data from LLM responses using Zod schemas, built on `generateText({ output: Output.object({ schema }) })`. It has no `retry` option and keeps the SDK's default retries (up to 2 extra attempts, only for errors the provider marks retryable).
 
 ```typescript
 import { generateStructured, z } from "@ad17-2/agent";
