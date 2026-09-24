@@ -4,7 +4,8 @@ export type AgentErrorCode =
   | "TOOL_EXECUTION"
   | "API_ERROR"
   | "MAX_ITERATIONS"
-  | "ABORTED";
+  | "ABORTED"
+  | "MCP_TOOL_CONFLICT";
 
 export class AgentError extends Error {
   override readonly name = "AgentError";
