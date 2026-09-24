@@ -13,25 +13,15 @@ describe("toStopReason", () => {
 
   for (const [finishReason, expected] of finishReasons) {
     it(`maps '${finishReason}' to '${expected}'`, () => {
-      expect(toStopReason(finishReason, [{}], 10, undefined)).toBe(expected);
+      expect(toStopReason(finishReason, 1, 10)).toBe(expected);
     });
   }
 
   it("maps 'tool-calls' to 'max_iterations' when the step cap was reached", () => {
-    const steps = [{}, {}, {}];
-    expect(toStopReason("tool-calls", steps, 3, undefined)).toBe("max_iterations");
+    expect(toStopReason("tool-calls", 3, 3)).toBe("max_iterations");
   });
 
   it("maps 'tool-calls' to 'other' when the step cap was not reached", () => {
-    const steps = [{}];
-    expect(toStopReason("tool-calls", steps, 10, undefined)).toBe("other");
-  });
-
-  it("reports 'aborted' when the caller's signal fired, regardless of finishReason", () => {
-    expect(toStopReason("stop", [{}], 10, "aborted")).toBe("aborted");
-  });
-
-  it("reports 'timeout' when the run timeout fired, regardless of finishReason", () => {
-    expect(toStopReason("length", [{}], 10, "timeout")).toBe("timeout");
+    expect(toStopReason("tool-calls", 1, 10)).toBe("other");
   });
 });

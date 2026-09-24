@@ -18,7 +18,6 @@ const DEFAULT_KEEP_RECENT_TURNS = 4;
 const DEFAULT_SUMMARIZE_INSTRUCTIONS =
   "Summarize the conversation so far concisely, preserving facts, decisions and open questions relevant to continuing it.";
 
-/** Resolves a LanguageModel (a model instance or a provider:model id string) to its modelId. */
 export function modelIdOf(model: LanguageModel): string {
   return typeof model === "string" ? model : model.modelId;
 }
@@ -35,16 +34,8 @@ export function estimateTokens(
   return Math.ceil(charsOf(messages) / charsPerToken);
 }
 
-/**
- * prepareStep hook. Once the estimated tokens for the step's messages exceed `maxInputTokens`,
- * prunes reasoning and tool call/result content from the history that precedes this run's user
- * message; the run's own messages are never touched (Anthropic needs thinking blocks for tool use
- * returned unchanged). Instructions and tool schemas count in usage.inputTokens but not in message
- * chars, so the estimate is overhead + chars/ratio, both solved from the last two steps' (prompt
- * chars, measured inputTokens) pairs. With one pair the overhead is taken as 0 and the ratio as
- * chars/tokens, which overestimates and so prunes early rather than late. Calibration state lives
- * in the returned function and is reset at step 0: build one per run.
- */
+// Prunes only the history before this run's user message: Anthropic needs the run's own thinking
+// blocks returned unchanged. Calibration state lives in the closure, so build one per run.
 export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
   let samples: Array<{ chars: number; tokens: number }> = [];
   let lastPromptChars = 0;

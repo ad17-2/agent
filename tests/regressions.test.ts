@@ -5,9 +5,7 @@ import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
 import { usage } from "./helpers.js";
 
-// Regression tests for bugs 1 and 2 from docs/design.md (multimodal history loss,
-// wrong stop reasons). Unmodified from the pre-upgrade commit except for the
-// mock-class swap (V3 -> V4) and the removal of the now-unnecessary cast.
+// Pre-ai-7 regressions: multimodal history loss and wrong stop reasons.
 
 const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";

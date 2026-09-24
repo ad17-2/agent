@@ -13,7 +13,6 @@ export interface ToolCallbacks {
 type ExecuteFn = NonNullable<Tool["execute"]>;
 type ExecuteOptions = Parameters<ExecuteFn>[1];
 
-/** The only tool wrapper in the codebase: enforces the timeout, runs hooks, and tracks call duration. */
 export function wrapToolsWithCallbacks(
   tools: ToolSet,
   logger: Logger | undefined,

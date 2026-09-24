@@ -18,11 +18,6 @@ function toTokenUsage(usage: {
   };
 }
 
-/**
- * Maps one SDK stream part to an AgentEvent, or undefined for parts the
- * public event stream does not surface (e.g. start-step, tool-input-delta).
- * `toolDurations` supplies durationMs for tool-call-complete, keyed by toolCallId.
- */
 export function toAgentEvent(
   part: TextStreamPart<ToolSet>,
   toolDurations: ReadonlyMap<string, number>,

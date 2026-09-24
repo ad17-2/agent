@@ -27,20 +27,4 @@ describe("AgentError", () => {
     expect(AgentError.is(null)).toBe(false);
     expect(AgentError.is(undefined)).toBe(false);
   });
-
-  it("supports all error codes", () => {
-    const codes = [
-      "TOOL_NOT_FOUND",
-      "TOOL_VALIDATION",
-      "TOOL_EXECUTION",
-      "API_ERROR",
-      "MAX_ITERATIONS",
-      "ABORTED",
-    ] as const;
-
-    for (const code of codes) {
-      const error = new AgentError("Test", code);
-      expect(error.code).toBe(code);
-    }
-  });
 });

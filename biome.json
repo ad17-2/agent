@@ -18,7 +18,6 @@
 	"linter": { "enabled": false },
 	"javascript": {
 		"formatter": {
-			"jsxQuoteStyle": "double",
 			"quoteProperties": "asNeeded",
 			"trailingCommas": "es5",
 			"semicolons": "always",
@@ -27,12 +26,6 @@
 			"quoteStyle": "double",
 			"attributePosition": "auto",
 			"bracketSpacing": true
-		}
-	},
-	"html": {
-		"formatter": {
-			"indentScriptAndStyle": false,
-			"selfCloseVoidElements": "always"
 		}
 	},
 	"assist": { "enabled": false }

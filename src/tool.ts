@@ -21,7 +21,6 @@ export interface ToolOptions<TInput extends z.ZodType> {
   timeoutMs?: number;
 }
 
-/** A `Tool` returned by `defineTool`, carrying its own timeout for `tool-wrapper.ts` to read. */
 export type DefinedTool = Tool & { timeoutMs?: number };
 
 export type { Tool };

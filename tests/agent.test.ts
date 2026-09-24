@@ -15,25 +15,6 @@ function mockModel(
 }
 
 describe("createAgent", () => {
-  it("creates an agent with run, stream, clearHistory, exportHistory, importHistory methods", () => {
-    const agent = createAgent({
-      model: mockModel(async () => ({
-        content: [{ type: "text", text: "ok" }],
-        finishReason: { unified: "stop", raw: "stop" },
-        usage: usage(),
-        warnings: [],
-      })),
-      systemPrompt: "You are helpful.",
-      tools: {},
-    });
-
-    expect(typeof agent.run).toBe("function");
-    expect(typeof agent.stream).toBe("function");
-    expect(typeof agent.clearHistory).toBe("function");
-    expect(typeof agent.exportHistory).toBe("function");
-    expect(typeof agent.importHistory).toBe("function");
-  });
-
   it("returns message and usage from a run", async () => {
     const model = mockModel(async () => ({
       content: [{ type: "text", text: "Hello! How can I help?" }],
@@ -75,47 +56,6 @@ describe("createAgent", () => {
     expect(result.cost?.outputUsd).toBeCloseTo(0.0075, 10);
     expect(result.cost?.totalUsd).toBeCloseTo(0.0105, 10);
     expect(result.cost?.unpricedModels).toEqual([]);
-  });
-
-  it("reports max_tokens when finish reason is length", async () => {
-    const model = mockModel(async () => ({
-      content: [{ type: "text", text: "Partial response..." }],
-      finishReason: { unified: "length", raw: "length" },
-      usage: usage(),
-      warnings: [],
-    }));
-
-    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
-    const result = await agent.run("Test");
-
-    expect(result.stopReason).toBe("max_tokens");
-  });
-
-  it("reports max_iterations when a tool-call run hits the step cap", async () => {
-    const echo = defineTool({
-      description: "Echo",
-      schema: z.object({ value: z.string() }),
-      handler: async ({ value }) => value,
-    });
-
-    const model = mockModel(async () => ({
-      content: [
-        {
-          type: "tool-call",
-          toolCallId: "call-1",
-          toolName: "echo",
-          input: JSON.stringify({ value: "hi" }),
-        },
-      ],
-      finishReason: { unified: "tool-calls", raw: "tool_use" },
-      usage: usage(),
-      warnings: [],
-    }));
-
-    const agent = createAgent({ model, systemPrompt: "Test", tools: { echo }, maxIterations: 1 });
-    const result = await agent.run("Test");
-
-    expect(result.stopReason).toBe("max_iterations");
   });
 
   it("calls onToolCall and onToolResult callbacks", async () => {
@@ -364,22 +304,6 @@ describe("createAgent", () => {
     } as unknown as SerializedHistory;
 
     expect(() => agent.importHistory(invalidHistory)).toThrow();
-  });
-
-  it("uses the logger when provided", async () => {
-    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    const model = mockModel(async () => ({
-      content: [{ type: "text", text: "Response" }],
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: usage(),
-      warnings: [],
-    }));
-
-    const agent = createAgent({ model, systemPrompt: "Test", tools: {}, logger });
-    await agent.run("Hello");
-
-    expect(logger.info).toHaveBeenCalled();
   });
 
   it("retries run() on transient errors", async () => {

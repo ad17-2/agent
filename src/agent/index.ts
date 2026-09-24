@@ -1,7 +1,7 @@
 import {
   ToolLoopAgent,
   gateway,
-  stepCountIs,
+  isStepCount,
   wrapLanguageModel,
   type LanguageModel,
   type StepResult,
@@ -204,7 +204,6 @@ export function createAgent(options: AgentOptions): Agent {
       ? mergeProviderOptions(thinkingProviderOptions ?? {}, extraProviderOptions ?? {})
       : undefined;
 
-  // functionId groups telemetry data by function in the exporter's UI; default it to traceId when unset.
   const telemetry = telemetryConfig
     ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
     : undefined;
@@ -213,7 +212,7 @@ export function createAgent(options: AgentOptions): Agent {
     model: modelOption,
     instructions: systemPrompt,
     tools: wrappedTools,
-    stopWhen: stepCountIs(maxIterations),
+    stopWhen: isStepCount(maxIterations),
     maxOutputTokens: maxTokens,
     maxRetries: 0,
     providerOptions,
@@ -226,7 +225,6 @@ export function createAgent(options: AgentOptions): Agent {
     }),
   });
 
-  /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
   async function summarizeIfOverBudget(
     abortSignal: AbortSignal
   ): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
@@ -331,12 +329,7 @@ export function createAgent(options: AgentOptions): Agent {
         });
 
         const usage = addUsage(toTokenUsage(result.usage), extraUsage);
-        const stopReason = toStopReason(
-          result.finishReason,
-          result.steps,
-          maxIterations,
-          undefined
-        );
+        const stopReason = toStopReason(result.finishReason, result.steps.length, maxIterations);
 
         historyManager.append(userMessage, result.responseMessages);
 
@@ -497,7 +490,7 @@ export function createAgent(options: AgentOptions): Agent {
         const responseMessages = await streamResult.responseMessages;
         const reasoningText = (await streamResult.finalStep).reasoningText;
 
-        const stopReason = toStopReason(finishReason, steps, maxIterations, undefined);
+        const stopReason = toStopReason(finishReason, steps.length, maxIterations);
 
         yield { type: "text-complete", content: text };
 
