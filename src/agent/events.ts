@@ -1,22 +1,6 @@
 import type { TextStreamPart, ToolSet } from "ai";
-import type { AgentEvent, TokenUsage, ToolCallRecord } from "../types.js";
-
-function toTokenUsage(usage: {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
-  outputTokenDetails?: { reasoningTokens?: number };
-}): TokenUsage {
-  return {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-    totalTokens: usage.totalTokens ?? 0,
-    cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
-    cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
-    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
-  };
-}
+import type { AgentEvent, ToolCallRecord } from "../types.js";
+import { toTokenUsage } from "../usage.js";
 
 export function toAgentEvent(
   part: TextStreamPart<ToolSet>,
@@ -74,5 +58,3 @@ export function toAgentEvent(
       return undefined;
   }
 }
-
-export { toTokenUsage };

@@ -1,4 +1,4 @@
-export { createAgent, type Agent } from "./agent/index.js";
+export { createAgent } from "./agent/index.js";
 export {
   defineTool,
   type Tool,
@@ -16,6 +16,7 @@ export { costOf, sumCost } from "./cost.js";
 export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } from "./context.js";
 
 export type {
+  Agent,
   AgentOptions,
   AgentResult,
   RunOptions,

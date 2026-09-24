@@ -52,3 +52,16 @@ export function sumCost(
 
   return { ...total, unpricedModels: [...unpriced] };
 }
+
+export function addCost(a: Cost | undefined, b: Cost | undefined): Cost | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    inputUsd: a.inputUsd + b.inputUsd,
+    outputUsd: a.outputUsd + b.outputUsd,
+    cacheReadUsd: a.cacheReadUsd + b.cacheReadUsd,
+    cacheWriteUsd: a.cacheWriteUsd + b.cacheWriteUsd,
+    totalUsd: a.totalUsd + b.totalUsd,
+    unpricedModels: [...new Set([...a.unpricedModels, ...b.unpricedModels])],
+  };
+}

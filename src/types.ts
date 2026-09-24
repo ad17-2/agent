@@ -232,4 +232,12 @@ export interface AgentResult {
   thinking?: string;
 }
 
+export interface Agent {
+  run(input: string, options?: RunOptions): Promise<AgentResult>;
+  stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
+  clearHistory(): void;
+  exportHistory(): SerializedHistory;
+  importHistory(history: SerializedHistory | SerializedHistoryV1): void;
+}
+
 export type { Tool, ToolSet };

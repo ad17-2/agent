@@ -12,15 +12,12 @@ import {
 } from "ai";
 import { splitTurns } from "./agent/history.js";
 import type { ContextConfig, Message } from "./types.js";
+import { zeroUsage } from "./usage.js";
 
 const DEFAULT_CHARS_PER_TOKEN = 4;
 const DEFAULT_KEEP_RECENT_TURNS = 4;
 const DEFAULT_SUMMARIZE_INSTRUCTIONS =
   "Summarize the conversation so far concisely, preserving facts, decisions and open questions relevant to continuing it.";
-
-export function modelIdOf(model: LanguageModel): string {
-  return typeof model === "string" ? model : model.modelId;
-}
 
 function charsOf(messages: ReadonlyArray<ModelMessage>): number {
   return messages.reduce((sum, m) => sum + JSON.stringify(m.content).length, 0);
@@ -106,16 +103,6 @@ function forSummaryPrompt({ timestamp: _timestamp, ...msg }: Message): ModelMess
     };
   }
   return msg;
-}
-
-function zeroUsage(): LanguageModelUsage {
-  return {
-    inputTokens: 0,
-    inputTokenDetails: { noCacheTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-    outputTokens: 0,
-    outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
-    totalTokens: 0,
-  };
 }
 
 export interface SummarizeResult {

@@ -1,6 +1,5 @@
 import {
   ToolLoopAgent,
-  gateway,
   isStepCount,
   wrapLanguageModel,
   type LanguageModel,
@@ -10,12 +9,13 @@ import {
 import { AgentError } from "../errors.js";
 import { buildUserMessage } from "../message.js";
 import type {
+  Agent,
   AgentEvent,
   AgentOptions,
   AgentResult,
   Cost,
+  LogLevel,
   Message,
-  ProviderOptions,
   RetryConfig,
   RunOptions,
   SerializedHistory,
@@ -29,10 +29,12 @@ import {
   retryMiddleware,
   type RetryOptions,
 } from "../utils/index.js";
-import { sumCost } from "../cost.js";
-import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
-import { toAgentEvent, toTokenUsage } from "./events.js";
+import { addCost, sumCost } from "../cost.js";
+import { estimateTokens, summarizeHistory, trimForStep } from "../context.js";
+import { addUsage, toTokenUsage, zeroUsage } from "../usage.js";
+import { toAgentEvent } from "./events.js";
 import { HistoryManager } from "./history.js";
+import { buildProviderOptions, modelIdOf, resolveModel } from "./model.js";
 import { toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
@@ -49,25 +51,6 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   maxDelayMs: 30000,
   retryOn: isRetryableError,
 };
-
-export interface Agent {
-  run(input: string, options?: RunOptions): Promise<AgentResult>;
-  stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
-  clearHistory(): void;
-  exportHistory(): SerializedHistory;
-  importHistory(history: SerializedHistory | SerializedHistoryV1): void;
-}
-
-function zeroUsage(): TokenUsage {
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    reasoningTokens: 0,
-  };
-}
 
 function buildToolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
   const errorsById = new Map(
@@ -98,28 +81,12 @@ function buildToolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
   });
 }
 
-/** String model ids resolve like the SDK does: through the global default provider, else the gateway. */
-function resolveModel(model: LanguageModel) {
-  return typeof model === "string"
-    ? (globalThis.AI_SDK_DEFAULT_PROVIDER ?? gateway).languageModel(model)
-    : model;
-}
-
-/** Merges per provider key, so caller options under `anthropic` do not wipe the `thinking` entry. */
-function mergeProviderOptions(base: ProviderOptions, extra: ProviderOptions): ProviderOptions {
-  const merged: ProviderOptions = { ...base };
-  for (const [provider, options] of Object.entries(extra)) {
-    merged[provider] = { ...merged[provider], ...options };
-  }
-  return merged;
-}
-
 function signalResult(
   stopReason: "aborted" | "timeout",
   toolsCalled: ToolCallRecord[],
   iterations: number
 ): AgentResult {
-  return { message: "", toolsCalled, iterations, stopReason, usage: zeroUsage() };
+  return { message: "", toolsCalled, iterations, stopReason, usage: toTokenUsage(zeroUsage()) };
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -156,11 +123,7 @@ export function createAgent(options: AgentOptions): Agent {
     retryOn: retryConfig?.retryOn ?? DEFAULT_RETRY.retryOn,
   };
 
-  function log(
-    level: "debug" | "info" | "warn" | "error",
-    message: string,
-    meta?: Record<string, unknown>
-  ) {
+  function log(level: LogLevel, message: string, meta?: Record<string, unknown>) {
     logger?.[level](message, meta);
   }
 
@@ -191,18 +154,7 @@ export function createAgent(options: AgentOptions): Agent {
     });
   }
 
-  const thinkingProviderOptions = thinking?.enabled
-    ? {
-        anthropic: {
-          thinking: { type: "enabled", budgetTokens: thinking.budgetTokens ?? 10000 },
-        },
-      }
-    : undefined;
-
-  const providerOptions =
-    thinkingProviderOptions || extraProviderOptions
-      ? mergeProviderOptions(thinkingProviderOptions ?? {}, extraProviderOptions ?? {})
-      : undefined;
+  const providerOptions = buildProviderOptions(thinking, extraProviderOptions);
 
   const telemetry = telemetryConfig
     ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
@@ -229,7 +181,7 @@ export function createAgent(options: AgentOptions): Agent {
     abortSignal: AbortSignal
   ): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
     if (!contextConfig || estimateTokens(historyManager.get()) <= contextConfig.maxInputTokens) {
-      return { extraUsage: zeroUsage() };
+      return { extraUsage: toTokenUsage(zeroUsage()) };
     }
 
     const summarizeModel = callModel(contextConfig.summarize?.model ?? modelOption);
@@ -251,30 +203,6 @@ export function createAgent(options: AgentOptions): Agent {
       extraCost: pricing
         ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing)
         : undefined,
-    };
-  }
-
-  function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-    return {
-      inputTokens: a.inputTokens + b.inputTokens,
-      outputTokens: a.outputTokens + b.outputTokens,
-      totalTokens: a.totalTokens + b.totalTokens,
-      cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
-      cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
-      reasoningTokens: a.reasoningTokens + b.reasoningTokens,
-    };
-  }
-
-  function addCost(a: Cost | undefined, b: Cost | undefined): Cost | undefined {
-    if (!a) return b;
-    if (!b) return a;
-    return {
-      inputUsd: a.inputUsd + b.inputUsd,
-      outputUsd: a.outputUsd + b.outputUsd,
-      cacheReadUsd: a.cacheReadUsd + b.cacheReadUsd,
-      cacheWriteUsd: a.cacheWriteUsd + b.cacheWriteUsd,
-      totalUsd: a.totalUsd + b.totalUsd,
-      unpricedModels: [...new Set([...a.unpricedModels, ...b.unpricedModels])],
     };
   }
 
@@ -474,7 +402,7 @@ export function createAgent(options: AgentOptions): Agent {
               toolsCalled,
               iterations: stepIndex,
               stopReason: "error",
-              usage: zeroUsage(),
+              usage: toTokenUsage(zeroUsage()),
             };
             log("error", "Agent stream failed mid-stream", { error: evt.error.message });
             await onError?.(evt.error, { phase: "api" });
@@ -530,7 +458,7 @@ export function createAgent(options: AgentOptions): Agent {
           toolsCalled,
           iterations: stepIndex,
           stopReason: "error",
-          usage: zeroUsage(),
+          usage: toTokenUsage(zeroUsage()),
         };
 
         log("error", "Agent stream failed", { error: errorObj.message });
