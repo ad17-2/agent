@@ -19,6 +19,7 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json && tsc --noEmit -p examples/tsconfig.json",

@@ -1,14 +1,6 @@
 import type { Tool, ToolSet } from "ai";
-import type { Logger, TimeoutConfig } from "../types.js";
-
-export interface ToolCallbacks {
-  onToolCall?: (name: string, input: unknown) => void | Promise<void>;
-  onToolResult?: (name: string, result: unknown) => void | Promise<void>;
-  onError?: (
-    error: Error,
-    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
-  ) => void | Promise<void>;
-}
+import type { DefinedTool } from "../tool.js";
+import type { AgentHooks, Logger, TimeoutConfig } from "../types.js";
 
 type ExecuteFn = NonNullable<Tool["execute"]>;
 type ExecuteOptions = Parameters<ExecuteFn>[1];
@@ -16,22 +8,20 @@ type ExecuteOptions = Parameters<ExecuteFn>[1];
 export function wrapToolsWithCallbacks(
   tools: ToolSet,
   logger: Logger | undefined,
-  callbacks: ToolCallbacks,
+  callbacks: Pick<AgentHooks, "onToolCall" | "onToolResult" | "onError">,
   timeoutConfig?: TimeoutConfig
 ): ToolSet {
   const { onToolCall, onToolResult, onError } = callbacks;
   const wrapped: ToolSet = {};
 
-  for (const [name, tool] of Object.entries(tools)) {
+  for (const [name, tool] of Object.entries<DefinedTool>(tools)) {
     const originalExecute = tool.execute;
     if (!originalExecute) {
       wrapped[name] = tool;
       continue;
     }
 
-    const ownTimeoutMs =
-      "timeoutMs" in tool && typeof tool.timeoutMs === "number" ? tool.timeoutMs : undefined;
-    const toolTimeoutMs = ownTimeoutMs ?? timeoutConfig?.toolTimeoutMs;
+    const toolTimeoutMs = tool.timeoutMs ?? timeoutConfig?.toolTimeoutMs;
 
     wrapped[name] = {
       ...tool,

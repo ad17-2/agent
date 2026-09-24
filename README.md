@@ -489,7 +489,7 @@ const agent = createAgent({
 
   onError: async (error, context) => {
     console.error(`Error in ${context.phase}:`, error.message);
-    if (context.toolName) {
+    if (context.phase === "tool") {
       console.error(`Tool: ${context.toolName}`);
     }
   },

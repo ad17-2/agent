@@ -175,15 +175,17 @@ export interface StepInfo {
   textGenerated: string;
 }
 
+export type ErrorContext =
+  | { phase: "tool"; toolName: string }
+  | { phase: "api" }
+  | { phase: "timeout" };
+
 export interface AgentHooks {
   onStart?: (input: string) => void | Promise<void>;
   onStep?: (step: StepInfo) => void | Promise<void>;
   onToolCall?: (toolName: string, input: unknown) => void | Promise<void>;
   onToolResult?: (toolName: string, result: unknown) => void | Promise<void>;
-  onError?: (
-    error: Error,
-    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
-  ) => void | Promise<void>;
+  onError?: (error: Error, context: ErrorContext) => void | Promise<void>;
   onComplete?: (result: AgentResult) => void | Promise<void>;
 }
 
