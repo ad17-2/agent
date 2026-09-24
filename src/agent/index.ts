@@ -331,8 +331,8 @@ export function createAgent(options: AgentOptions): Agent {
           onStepEnd: (step) => recorder.onStepEnd(step),
         });
         const settled = streamResult.steps.then(
-          () => undefined,
-          () => undefined
+          (steps) => steps,
+          () => []
         );
 
         for await (const part of streamResult.fullStream) {

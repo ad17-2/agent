@@ -64,25 +64,26 @@ export class StepRecorder {
 
   /**
    * The next step's records for the stream's step-complete event. The SDK enqueues `finish-step`
-   * before it runs `onStepEnd`, so this waits for the step to end; empty once `settled` wins.
+   * before it runs `onStepEnd`, so this waits for the step to end. If the stream settles first,
+   * the records are built from the settled steps instead, so a lost callback cannot read as "no tools".
    */
   async takeStep(
-    settled: PromiseLike<unknown>
+    settled: PromiseLike<ReadonlyArray<StepResult<ToolSet>> | undefined>
   ): Promise<{ stepIndex: number; toolsCalled: ToolCallRecord[] }> {
     const stepIndex = this.taken++;
     let records = this.byStep[stepIndex];
     while (!records) {
-      const ended = await Promise.race([
-        new Promise<boolean>((resolve) => {
-          this.wake = () => resolve(false);
+      const steps = await Promise.race([
+        new Promise<undefined>((resolve) => {
+          this.wake = () => resolve(undefined);
         }),
-        Promise.resolve(settled).then(
-          () => true,
-          () => true
-        ),
+        settled,
       ]);
       records = this.byStep[stepIndex];
-      if (ended) break;
+      if (steps) {
+        records ??= steps[stepIndex] ? toolCallRecords(steps[stepIndex]) : [];
+        break;
+      }
     }
     return { stepIndex, toolsCalled: records ?? [] };
   }

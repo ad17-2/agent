@@ -608,7 +608,7 @@ describe("agent.stream events", () => {
     });
   });
 
-  it("measures each run's tool durations on their own, even when tool call ids repeat", async () => {
+  it("reports each call's own SDK-measured duration, even when tool call ids repeat across runs", async () => {
     // Timers can fire up to ~1ms early against the SDK's clock, so compare against half the delay.
     const slowMs = 80;
     let calls = 0;
