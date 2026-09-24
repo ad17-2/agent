@@ -1,4 +1,4 @@
-import type { LanguageModelMiddleware } from "ai";
+import { APICallError, StreamProviderError, type LanguageModelMiddleware } from "ai";
 import type { RetryConfig } from "../types.js";
 import { calculateBackoff, sleep } from "./async.js";
 
@@ -6,12 +6,45 @@ export interface RetryOptions extends Required<RetryConfig> {
   logger?: (message: string, meta?: Record<string, unknown>) => void;
 }
 
+/** The SDK's own signal: an error the provider classified says so itself; otherwise only a failed connection or a timed-out request. */
+export function isRetryableError(error: Error): boolean {
+  if (APICallError.isInstance(error) || StreamProviderError.isInstance(error)) {
+    return error.isRetryable;
+  }
+  return (
+    error.name === "TimeoutError" ||
+    (error.name === "TypeError" && error.message === "fetch failed")
+  );
+}
+
 type WrapStreamOptions = Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0];
 type StreamResult = Awaited<ReturnType<WrapStreamOptions["doStream"]>>;
 type StreamPart = StreamResult["stream"] extends ReadableStream<infer P> ? P : never;
 
+/** A provider's stream `error` part carries a plain `{ message, statusCode, isRetryable }` object; keep its classification. */
 function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
+  if (error instanceof Error) return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return new StreamProviderError({
+      message: error.message,
+      type: "type" in error && typeof error.type === "string" ? error.type : undefined,
+      statusCode:
+        "statusCode" in error && typeof error.statusCode === "number"
+          ? error.statusCode
+          : undefined,
+      isRetryable:
+        "isRetryable" in error && typeof error.isRetryable === "boolean"
+          ? error.isRetryable
+          : undefined,
+      data: error,
+    });
+  }
+  return new Error(String(error));
 }
 
 /** Sleeps before the next attempt, or rethrows `error` when no attempt is allowed. Never sleeps once `signal` has fired. */

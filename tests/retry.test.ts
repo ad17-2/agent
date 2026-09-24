@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { simulateReadableStream } from "ai";
+import { APICallError, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
@@ -17,6 +17,16 @@ function usage(inputTokens = 10, outputTokens = 20) {
     },
     outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
   };
+}
+
+function apiError(statusCode: number) {
+  return new APICallError({
+    message: `HTTP ${statusCode}`,
+    url: "https://api.example",
+    requestBodyValues: {},
+    statusCode,
+    isRetryable: statusCode === 429 || statusCode >= 500,
+  });
 }
 
 const textChunks: LanguageModelV4StreamPart[] = [
@@ -57,7 +67,7 @@ describe("retry is per model call", () => {
             warnings: [],
           };
         }
-        if (call === 2) throw new Error("Transient error");
+        if (call === 2) throw apiError(529);
         return {
           content: [{ type: "text", text: "Success" }],
           finishReason: { unified: "stop", raw: "stop" },
@@ -87,7 +97,7 @@ describe("retry is per model call", () => {
   it("gives up after maxAttempts and throws API_ERROR", async () => {
     const model = new MockLanguageModelV4({
       doGenerate: async () => {
-        throw new Error("still failing");
+        throw apiError(503);
       },
     });
     const agent = createAgent({
@@ -123,7 +133,7 @@ describe("retry is per model call", () => {
     const model = new MockLanguageModelV4({
       doStream: async () => {
         call++;
-        if (call === 1) throw new Error("connect failed");
+        if (call === 1) throw apiError(503);
         return { stream: simulateReadableStream({ chunks: textChunks }) };
       },
     });
@@ -153,7 +163,7 @@ describe("retry is per model call", () => {
               call === 1
                 ? [
                     { type: "stream-start", warnings: [] },
-                    { type: "error", error: new Error("overloaded") },
+                    { type: "error", error: apiError(529) },
                   ]
                 : textChunks,
           }),
@@ -203,5 +213,93 @@ describe("retry is per model call", () => {
       result: { stopReason: "error" },
     });
     expect(model.doStreamCalls).toHaveLength(1);
+  });
+});
+
+describe("retry config defaults", () => {
+  it("an explicit undefined maxAttempts falls back to the default 3, not forever", async () => {
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        call++;
+        if (call <= 3) throw apiError(529);
+        return {
+          content: [{ type: "text", text: "late" }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(),
+          warnings: [],
+        };
+      },
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      retry: { maxAttempts: undefined, initialDelayMs: 1 },
+    });
+
+    await expect(agent.run("go")).rejects.toMatchObject({ code: "API_ERROR" });
+    expect(model.doGenerateCalls).toHaveLength(3);
+  });
+
+  it("an explicit undefined retryOn falls back to the default predicate", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw apiError(529);
+      },
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      retry: { retryOn: undefined, initialDelayMs: 1 },
+    });
+
+    await expect(agent.run("go")).rejects.toMatchObject({ code: "API_ERROR", message: "HTTP 529" });
+    expect(model.doGenerateCalls).toHaveLength(3);
+  });
+
+  it("does not retry an error the provider marks non-retryable (400)", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw apiError(400);
+      },
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      retry: { initialDelayMs: 1 },
+    });
+
+    await expect(agent.run("go")).rejects.toMatchObject({ code: "API_ERROR", message: "HTTP 400" });
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
+  it("retries an error the provider marks retryable (529)", async () => {
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        call++;
+        if (call === 1) throw apiError(529);
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(),
+          warnings: [],
+        };
+      },
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      retry: { initialDelayMs: 1 },
+    });
+
+    const result = await agent.run("go");
+
+    expect(result.message).toBe("ok");
+    expect(model.doGenerateCalls).toHaveLength(2);
   });
 });

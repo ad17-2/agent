@@ -23,7 +23,12 @@ import type {
   TokenUsage,
   ToolCallRecord,
 } from "../types.js";
-import { createRunSignal, retryMiddleware, type RetryOptions } from "../utils/index.js";
+import {
+  createRunSignal,
+  isRetryableError,
+  retryMiddleware,
+  type RetryOptions,
+} from "../utils/index.js";
 import { sumCost } from "../cost.js";
 import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
 import { toAgentEvent, toTokenUsage } from "./events.js";
@@ -42,7 +47,7 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   backoff: "exponential",
   initialDelayMs: 1000,
   maxDelayMs: 30000,
-  retryOn: () => true,
+  retryOn: isRetryableError,
 };
 
 export interface Agent {
@@ -145,7 +150,14 @@ export function createAgent(options: AgentOptions): Agent {
     onComplete,
   } = options;
 
-  const retry = { ...DEFAULT_RETRY, ...retryConfig };
+  // Field by field so an explicit `undefined` still takes the default.
+  const retry: Required<RetryConfig> = {
+    maxAttempts: retryConfig?.maxAttempts ?? DEFAULT_RETRY.maxAttempts,
+    backoff: retryConfig?.backoff ?? DEFAULT_RETRY.backoff,
+    initialDelayMs: retryConfig?.initialDelayMs ?? DEFAULT_RETRY.initialDelayMs,
+    maxDelayMs: retryConfig?.maxDelayMs ?? DEFAULT_RETRY.maxDelayMs,
+    retryOn: retryConfig?.retryOn ?? DEFAULT_RETRY.retryOn,
+  };
 
   function log(
     level: "debug" | "info" | "warn" | "error",

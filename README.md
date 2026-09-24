@@ -124,7 +124,9 @@ const result = await agent.run("Hello!");
 | `backoff` | `BackoffStrategy` | `"exponential"` | `"fixed"`, `"linear"`, or `"exponential"` |
 | `initialDelayMs` | `number` | `1000` | Initial delay between retries |
 | `maxDelayMs` | `number` | `30000` | Maximum delay between retries |
-| `retryOn` | `(error) => boolean` | `() => true` | Predicate to determine if error is retryable |
+| `retryOn` | `(error) => boolean` | the SDK's own classification | Predicate deciding whether a failed call is retried. The default retries what the provider marks retryable (`APICallError`/`StreamProviderError` with `isRetryable: true`: 429, 5xx, overloaded) plus a failed connection or a timed-out request; a 400 or 401 is attempted once |
+
+An explicit `undefined` for any field takes that field's default.
 
 `retry` is the only retry layer: the SDK's own retries are disabled (`maxRetries: 0`) and the package's retry runs as a language-model middleware around each single model call, so a transient failure on step 2 re-issues only that call: step 1's tools are not re-executed and `toolsCalled` is not duplicated. Failed attempts contribute no usage (a rejected call reports none). For `stream()`, a call is retried only while nothing past the provider's `stream-start` has been delivered; once output has started, a failure is returned as `stopReason: "error"` plus an `error` event, since replaying would duplicate text the caller already saw. Nothing is retried, and no backoff sleep runs, once the run timeout or the caller's signal has fired.
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { simulateReadableStream } from "ai";
+import { APICallError, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
@@ -397,7 +397,15 @@ describe("createAgent", () => {
     let attempts = 0;
     const model = mockModel(async () => {
       attempts++;
-      if (attempts < 3) throw new Error("Transient error");
+      if (attempts < 3) {
+        throw new APICallError({
+          message: "overloaded",
+          url: "https://api.example",
+          requestBodyValues: {},
+          statusCode: 529,
+          isRetryable: true,
+        });
+      }
       return {
         content: [{ type: "text", text: "Success" }],
         finishReason: { unified: "stop", raw: "stop" },
