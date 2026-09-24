@@ -424,6 +424,8 @@ See:
 
 `loadMcpTools` is exported from the `@ad17-2/agent/mcp` subpath, not the package root, so core usage never pulls in `@ai-sdk/mcp` (an optional peer dependency — install it yourself: `pnpm add @ai-sdk/mcp`).
 
+Only MCP tools are supported: `loadMcpTools` calls `client.tools()` and nothing else, so server prompts and resources are out of scope and not loaded.
+
 ```typescript
 import { createAgent, defineTool, z } from "@ad17-2/agent";
 import { loadMcpTools } from "@ad17-2/agent/mcp";
