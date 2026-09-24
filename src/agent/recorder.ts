@@ -15,17 +15,17 @@ function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
     const errorPart = errorsById.get(call.toolCallId);
     const result = resultsById.get(call.toolCallId);
 
-    return {
+    const record: ToolCallRecord = {
       name: call.toolName,
       input: call.input,
       output: result?.output,
       durationMs: step.performance.toolExecutionMs[call.toolCallId] ?? 0,
-      error: errorPart
-        ? errorPart.error instanceof Error
-          ? errorPart.error.message
-          : String(errorPart.error)
-        : undefined,
     };
+    if (errorPart) {
+      record.error =
+        errorPart.error instanceof Error ? errorPart.error.message : String(errorPart.error);
+    }
+    return record;
   });
 }
 

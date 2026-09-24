@@ -192,6 +192,7 @@ describe("createAgent", () => {
 
     expect(result.toolsCalled).toHaveLength(1);
     expect(result.toolsCalled[0]!.durationMs).toBeGreaterThan(0);
+    expect(result.toolsCalled[0]).not.toHaveProperty("error");
   });
 
   it("returns an 'aborted' result (does not throw) when aborted before run", async () => {
@@ -597,7 +598,7 @@ describe("agent.stream events", () => {
     expect(events[step0]).toMatchObject({
       stepIndex: 0,
       toolsCalled: [
-        { name: "echo", output: "echoed", error: undefined },
+        { name: "echo", output: "echoed" },
         { name: "boom", output: undefined, error: "boom" },
       ],
     });
