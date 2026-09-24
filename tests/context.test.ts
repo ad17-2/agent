@@ -158,6 +158,46 @@ describe("trimForStep", () => {
     expect(JSON.stringify(step1?.messages)).not.toContain("tool-call");
   });
 
+  it("measures the fixed prompt overhead from two steps instead of folding it into the ratio", async () => {
+    // Every step carries 5000 tokens of instructions and tool schemas that are not in the message
+    // chars, at exactly 4 chars/token: step 0 is 400 chars / 5100 tokens, step 1 is 2400 / 5600.
+    // Two pairs give ratio 4 and overhead 5000, so step 2's 4400 chars are 6100 tokens: under the
+    // 10000 budget. Folding the overhead into the ratio (2400 / 5600 chars per token) reads the
+    // same 4400 chars as ~10267 tokens and prunes.
+    const cfg: ContextConfig = { maxInputTokens: 10_000 };
+    const prepareStep = trimForStep(cfg);
+    const initialMessages = [...buildTurns(1), { role: "user", content: "a".repeat(398) } as const];
+    const historyChars = JSON.stringify(buildTurns(1).map((m) => m.content)).length;
+    const tokensFor = (chars: number) => 5000 + chars / 4;
+    const chars0 = 400 + historyChars - 2; // JSON.stringify of the array adds "[" and "]"
+    const response1: ResponseMessages = [{ role: "assistant", content: "r".repeat(1998) }];
+    const response2: ResponseMessages = [
+      ...response1,
+      { role: "assistant", content: "s".repeat(1998) },
+    ];
+
+    await prepareStep(prepareStepOptions(initialMessages, 0, { initialMessages }));
+    await prepareStep(
+      prepareStepOptions([...initialMessages, ...response1], 1, {
+        initialMessages,
+        responseMessages: response1,
+        steps: [stepWithInputTokens(tokensFor(chars0))],
+      })
+    );
+    const step2 = await prepareStep(
+      prepareStepOptions([...initialMessages, ...response2], 2, {
+        initialMessages,
+        responseMessages: response2,
+        steps: [
+          stepWithInputTokens(tokensFor(chars0)),
+          stepWithInputTokens(tokensFor(chars0 + 2000)),
+        ],
+      })
+    );
+
+    expect(step2).toEqual({});
+  });
+
   it("resets calibration per run", async () => {
     const cfg: ContextConfig = { maxInputTokens: 150 };
     const prepareStep = trimForStep(cfg);

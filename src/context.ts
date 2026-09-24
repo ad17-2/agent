@@ -36,25 +36,42 @@ export function estimateTokens(
 }
 
 /**
- * prepareStep hook. Once the calibrated estimate for the step's messages exceeds `maxInputTokens`,
+ * prepareStep hook. Once the estimated tokens for the step's messages exceed `maxInputTokens`,
  * prunes reasoning and tool call/result content from the history that precedes this run's user
  * message; the run's own messages are never touched (Anthropic needs thinking blocks for tool use
- * returned unchanged). The chars/token ratio is calibrated from the previous step's own prompt
- * chars and measured usage.inputTokens, and reset at step 0 of every run. Instructions and tool
- * schemas are not in the char count, so the ratio lands on the conservative side.
+ * returned unchanged). Instructions and tool schemas count in usage.inputTokens but not in message
+ * chars, so the estimate is overhead + chars/ratio, both solved from the last two steps' (prompt
+ * chars, measured inputTokens) pairs. With one pair the overhead is taken as 0 and the ratio as
+ * chars/tokens, which overestimates and so prunes early rather than late. Calibration state lives
+ * in the returned function and is reset at step 0: build one per run.
  */
 export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
-  let charsPerToken = DEFAULT_CHARS_PER_TOKEN;
+  let samples: Array<{ chars: number; tokens: number }> = [];
   let lastPromptChars = 0;
 
+  const estimate = (chars: number): number => {
+    const [older, newer] = samples;
+    if (!older) return chars / DEFAULT_CHARS_PER_TOKEN;
+    if (newer && newer.tokens !== older.tokens) {
+      const ratio = (newer.chars - older.chars) / (newer.tokens - older.tokens);
+      const overhead = older.tokens - older.chars / ratio;
+      if (ratio > 0 && overhead >= 0) return overhead + chars / ratio;
+    }
+    const last = newer ?? older;
+    return (chars * last.tokens) / last.chars;
+  };
+
   return ({ messages, steps, stepNumber, responseMessages }) => {
-    if (stepNumber === 0) charsPerToken = DEFAULT_CHARS_PER_TOKEN;
+    if (stepNumber === 0) samples = [];
     const lastStep = steps[steps.length - 1];
     if (lastStep?.usage.inputTokens && lastPromptChars > 0) {
-      charsPerToken = lastPromptChars / lastStep.usage.inputTokens;
+      samples = [
+        ...samples.slice(-1),
+        { chars: lastPromptChars, tokens: lastStep.usage.inputTokens },
+      ];
     }
 
-    if (estimateTokens(messages, charsPerToken) <= cfg.maxInputTokens) {
+    if (Math.ceil(estimate(charsOf(messages))) <= cfg.maxInputTokens) {
       lastPromptChars = charsOf(messages);
       return {};
     }
