@@ -408,7 +408,7 @@ const agent = createAgent({
 
 See:
 
-- `examples/telemetry-console.ts` — `@ai-sdk/otel` + a `NodeTracerProvider`/`ConsoleSpanExporter`, driven by a `MockLanguageModelV4` so it runs with no API key: `pnpm exec tsx examples/telemetry-console.ts`.
+- `examples/telemetry-console.ts` — `@ai-sdk/otel` + a `NodeTracerProvider`/`ConsoleSpanExporter`, driven by a `MockLanguageModelV4` so it runs with no API key: `pnpm example:telemetry`.
 - `examples/telemetry-langfuse.ts` — `@langfuse/vercel-ai-sdk` + `@langfuse/otel` against a real Anthropic call; reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and `ANTHROPIC_API_KEY` from env.
 
 ---

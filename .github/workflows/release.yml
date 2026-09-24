@@ -78,9 +78,17 @@ jobs:
 
       - run: pnpm install
 
+      - run: pnpm lint
+
+      - run: pnpm format:check
+
+      - run: pnpm typecheck
+
       - run: pnpm test
 
       - run: pnpm build
+
+      - run: pnpm check:package
 
       - run: pnpm publish --no-git-checks
         env:
