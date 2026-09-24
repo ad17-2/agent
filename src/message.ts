@@ -36,5 +36,5 @@ export function buildUserMessage(input: string, attachments?: Attachment[]): Mod
   const content: UserContentPart[] = attachments.map(attachmentToPart);
   content.push({ type: "text", text: input });
 
-  return { role: "user", content } as ModelMessage;
+  return { role: "user", content };
 }

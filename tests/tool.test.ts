@@ -32,6 +32,7 @@ describe("defineTool", () => {
       {
         toolCallId: "test-id",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -57,6 +58,7 @@ describe("defineTool", () => {
       {
         toolCallId: "test-id",
         abortSignal: controller.signal,
+        context: undefined,
         messages: [],
       }
     );
@@ -81,6 +83,7 @@ describe("defineTool", () => {
       {
         toolCallId: "my-tool-call-123",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -105,6 +108,7 @@ describe("defineTool", () => {
       {
         toolCallId: "error-test",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -132,6 +136,7 @@ describe("defineTool", () => {
         {
           toolCallId: "test",
           abortSignal: undefined,
+          context: undefined,
           messages: [],
         }
       )
@@ -156,6 +161,7 @@ describe("defineTool", () => {
       {
         toolCallId: "fast-test",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );
@@ -181,6 +187,7 @@ describe("defineTool", () => {
       {
         toolCallId: "async-error",
         abortSignal: undefined,
+        context: undefined,
         messages: [],
       }
     );

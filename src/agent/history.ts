@@ -8,11 +8,12 @@ export interface HistoryConfig {
 
 /** Converts a pre-ai-7 (text-only) serialized history into v2 ModelMessage-based history. */
 function fromV1(serialized: SerializedHistoryV1): Message[] {
-  return serialized.messages.map((msg) => ({
-    role: msg.role,
-    content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-    timestamp: msg.timestamp,
-  })) as Message[];
+  return serialized.messages.map((msg): Message => {
+    const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    return msg.role === "user"
+      ? { role: "user", content, timestamp: msg.timestamp }
+      : { role: "assistant", content, timestamp: msg.timestamp };
+  });
 }
 
 export class HistoryManager {

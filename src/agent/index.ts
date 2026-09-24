@@ -10,7 +10,6 @@ import type {
   RunOptions,
   SerializedHistory,
   SerializedHistoryV1,
-  StopReason,
   TokenUsage,
   ToolCallRecord,
 } from "../types.js";
@@ -249,7 +248,7 @@ export function createAgent(options: AgentOptions): Agent {
         const usage = toTokenUsage(result.usage);
         const stopReason = toStopReason(result.finishReason, result.steps, maxIterations, undefined);
 
-        historyManager.append(userMessage, result.responseMessages as Message[]);
+        historyManager.append(userMessage, result.responseMessages);
 
         const agentResult: AgentResult = {
           message: result.text,
@@ -257,7 +256,7 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: result.steps.length,
           stopReason,
           usage,
-          thinking: result.reasoningText,
+          thinking: result.finalStep.reasoningText,
         };
 
         log("info", "Agent run completed", { iterations: agentResult.iterations, stopReason });
@@ -278,7 +277,7 @@ export function createAgent(options: AgentOptions): Agent {
             message: "",
             toolsCalled,
             iterations: stepIndex,
-            stopReason: signalState as StopReason,
+            stopReason: signalState,
             usage: zeroUsage(),
           };
         }
@@ -385,13 +384,13 @@ export function createAgent(options: AgentOptions): Agent {
         const finishReason = await streamResult.finishReason;
         const steps = await streamResult.steps;
         const responseMessages = await streamResult.responseMessages;
-        const reasoningText = await streamResult.reasoningText;
+        const reasoningText = (await streamResult.finalStep).reasoningText;
 
         const stopReason = toStopReason(finishReason, steps, maxIterations, undefined);
 
         yield { type: "text-complete", content: text };
 
-        historyManager.append(userMessage, responseMessages as Message[]);
+        historyManager.append(userMessage, responseMessages);
 
         const agentResult: AgentResult = {
           message: text,
@@ -418,7 +417,7 @@ export function createAgent(options: AgentOptions): Agent {
           message: "",
           toolsCalled,
           iterations: stepIndex,
-          stopReason: (signalState ?? "error") as StopReason,
+          stopReason: signalState ?? "error",
           usage: zeroUsage(),
         };
 

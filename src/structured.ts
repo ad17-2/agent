@@ -1,7 +1,7 @@
 import { generateText, Output, type LanguageModel, type ModelMessage } from "ai";
 import type { z } from "zod";
 
-export interface GenerateStructuredOptions<T extends z.ZodTypeAny> {
+export interface GenerateStructuredOptions<T extends z.ZodType> {
   model: LanguageModel;
   schema: T;
   prompt: string;
@@ -21,7 +21,7 @@ export interface StructuredResult<T> {
   };
 }
 
-export async function generateStructured<T extends z.ZodTypeAny>(
+export async function generateStructured<T extends z.ZodType>(
   options: GenerateStructuredOptions<T>
 ): Promise<StructuredResult<z.infer<T>>> {
   const { model, schema, prompt, image, maxTokens, signal } = options;

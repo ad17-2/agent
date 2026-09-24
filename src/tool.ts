@@ -12,7 +12,7 @@ export interface ToolErrorContext<TInput = unknown> {
   toolCallId?: string;
 }
 
-export interface ToolOptions<TInput extends z.ZodTypeAny> {
+export interface ToolOptions<TInput extends z.ZodType> {
   description: string;
   schema: TInput;
   handler: (input: z.infer<TInput>, context: ToolContext) => Promise<unknown>;
@@ -26,7 +26,7 @@ export type DefinedTool = Tool & { timeoutMs?: number };
 
 export type { Tool };
 
-export function defineTool<TInput extends z.ZodTypeAny>(options: ToolOptions<TInput>): DefinedTool {
+export function defineTool<TInput extends z.ZodType>(options: ToolOptions<TInput>): DefinedTool {
   const { description, schema, handler, onError, timeoutMs } = options;
 
   const built: DefinedTool = aiTool({

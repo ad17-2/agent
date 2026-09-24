@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
-import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
+import { simulateReadableStream } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
@@ -14,7 +15,7 @@ function usage(inputTokens = 10, outputTokens = 20) {
 }
 
 function mockModel(
-  doGenerate: ConstructorParameters<typeof MockLanguageModelV4>[0]["doGenerate"]
+  doGenerate: NonNullable<ConstructorParameters<typeof MockLanguageModelV4>[0]>["doGenerate"]
 ) {
   return new MockLanguageModelV4({ doGenerate });
 }
