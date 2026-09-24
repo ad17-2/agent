@@ -31,8 +31,9 @@ export function wrapToolsWithCallbacks(
       continue;
     }
 
-    const toolTimeoutMs =
-      (tool as { timeoutMs?: number }).timeoutMs ?? timeoutConfig?.toolTimeoutMs;
+    const ownTimeoutMs =
+      "timeoutMs" in tool && typeof tool.timeoutMs === "number" ? tool.timeoutMs : undefined;
+    const toolTimeoutMs = ownTimeoutMs ?? timeoutConfig?.toolTimeoutMs;
 
     wrapped[name] = {
       ...tool,
@@ -80,7 +81,12 @@ export function wrapToolsWithCallbacks(
           const errorObj = error instanceof Error ? error : new Error(String(error));
           timings.set(toolCallId, Date.now() - start);
           // Cut off by the run's own signal (timeout or abort): the run reports that once, not the tool.
-          if (!execOptions?.abortSignal?.aborted) {
+          // A tool that fails with its own error at the same moment is still reported.
+          const runSignal = execOptions?.abortSignal;
+          const cutOffByRun =
+            runSignal?.aborted === true &&
+            (error === runSignal.reason || errorObj.name === "AbortError");
+          if (!cutOffByRun) {
             logger?.error(`Tool error: ${name}`, { error: errorObj.message });
             await onError?.(errorObj, { phase: "tool", toolName: name });
           }

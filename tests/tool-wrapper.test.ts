@@ -144,4 +144,30 @@ describe("wrapToolsWithCallbacks", () => {
     expect(onToolResult).toHaveBeenCalledWith("greet", "Hello, World!");
     expect(timings.get("call-1")).toBeGreaterThanOrEqual(0);
   });
+
+  it("still reports a tool's own error when the run signal fires at the same moment", async () => {
+    const onError = vi.fn();
+    const controller = new AbortController();
+    const buggy = defineTool({
+      description: "fails on its own",
+      schema: z.object({}),
+      handler: () => {
+        controller.abort(new Error("run timed out"));
+        throw new Error("invalid API key");
+      },
+    });
+
+    const wrapped = wrapToolsWithCallbacks({ buggy }, new Map(), undefined, { onError });
+
+    await expect(
+      wrapped.buggy!.execute!(
+        {},
+        { toolCallId: "t1", abortSignal: controller.signal, context: undefined, messages: [] }
+      )
+    ).rejects.toThrow();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "invalid API key" }), {
+      phase: "tool",
+      toolName: "buggy",
+    });
+  });
 });

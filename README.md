@@ -507,7 +507,7 @@ const agent = createAgent({
 | `api` | Error occurred during API call |
 | `timeout` | The run timeout fired (the result has `stopReason: "timeout"`) |
 
-A tool cut off by the run's own signal (the run timeout or the caller's `RunOptions.signal`) is not also reported with `phase: "tool"`: a run timeout calls `onError` once, with `phase: "timeout"`, and a caller abort calls it not at all.
+A tool cut off by the run's own signal (the run timeout or the caller's `RunOptions.signal`) is not also reported with `phase: "tool"`: a run timeout calls `onError` once, with `phase: "timeout"`, and a caller abort calls it not at all. A tool that fails with its own error at that moment (anything other than the abort reason or an `AbortError`) is still reported with `phase: "tool"`.
 
 ---
 
