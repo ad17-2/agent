@@ -32,7 +32,7 @@ export async function loadMcpTools(servers: McpServer[]): Promise<LoadedMcp> {
       const serverTools = await client.tools();
       for (const [toolName, tool] of Object.entries(serverTools)) {
         const name = server.prefix ? `${server.prefix}${toolName}` : toolName;
-        if (name in tools) {
+        if (Object.hasOwn(tools, name)) {
           throw new AgentError(
             `MCP tool name conflict: "${name}" from server "${server.name}"`,
             "MCP_TOOL_CONFLICT"

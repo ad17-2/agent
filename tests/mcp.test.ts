@@ -9,12 +9,12 @@ import { AgentError } from "../src/errors.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/mcp-server.mjs", import.meta.url));
 
-function echoServer(name: string, prefix?: string) {
+function echoServer(name: string, prefix?: string, toolNames: string[] = []) {
   return {
     name,
     transport: new Experimental_StdioMCPTransport({
       command: process.execPath,
-      args: [fixturePath],
+      args: [fixturePath, ...toolNames],
     }),
     prefix,
   };
@@ -90,6 +90,15 @@ describe("loadMcpTools", () => {
     } catch (error) {
       expect(AgentError.is(error)).toBe(true);
       expect((error as AgentError).code).toBe("MCP_TOOL_CONFLICT");
+    }
+  });
+
+  it("does not report a conflict for tool names that exist on Object.prototype", async () => {
+    const mcp = await loadMcpTools([echoServer("proto", undefined, ["constructor", "toString"])]);
+    try {
+      expect(Object.keys(mcp.tools).sort()).toEqual(["constructor", "toString"]);
+    } finally {
+      await mcp.close();
     }
   });
 
