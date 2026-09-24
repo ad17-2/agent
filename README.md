@@ -416,7 +416,7 @@ const agent = createAgent({
 See:
 
 - `examples/telemetry-console.ts` — `@ai-sdk/otel` + a `NodeTracerProvider`/`ConsoleSpanExporter`, driven by a `MockLanguageModelV4` so it runs with no API key: `pnpm example:telemetry`.
-- `examples/telemetry-langfuse.ts` — `@langfuse/vercel-ai-sdk` + `@langfuse/otel` against a real Anthropic call; reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and `ANTHROPIC_API_KEY` from env.
+- `examples/telemetry-langfuse.ts` — `@langfuse/vercel-ai-sdk` + `@langfuse/otel` against a real Anthropic call; reads `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, and `ANTHROPIC_API_KEY` from env. Its wiring (`examples/langfuse-setup.ts`) is verified without keys by `tests/telemetry-langfuse.test.ts`: a local receiver gets the OTLP/HTTP JSON export at `/api/public/otel/v1/traces`, with the Basic auth header and the `invoke_agent`, `step` and `chat` spans.
 
 ---
 
