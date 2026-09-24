@@ -26,11 +26,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.1",
-    "ai": "6.0.3",
-    "zod": "4.2.1"
+    "ai": "^7.0.113",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@ai-sdk/anthropic": "^4.0.62",
     "@eslint/js": "^9.39.2",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
@@ -42,7 +42,7 @@
     "vitest": "^4.0.16"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "keywords": [
     "ai",

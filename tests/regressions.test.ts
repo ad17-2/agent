@@ -1,13 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { MockLanguageModelV3 } from "ai/test";
+import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
-import type { StopReason } from "../src/types.js";
 
-// Regression tests written against the current ai 6.0.3 code, before the ai 7
-// upgrade. They are expected to be RED here and are kept green by the
-// rebuild in the next commit. See docs/design.md, bugs 1 and 2.
+// Regression tests for bugs 1 and 2 from docs/design.md (multimodal history loss,
+// wrong stop reasons). Unmodified from the pre-upgrade commit except for the
+// mock-class swap (V3 -> V4) and the removal of the now-unnecessary cast.
 
 const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -19,13 +18,14 @@ function usage(inputTokens: number, outputTokens: number) {
   };
 }
 
-describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild)", () => {
+describe("regressions (fixed by the ai 7 rebuild)", () => {
   it("a) turn 2's prompt still carries turn 1's image and text", async () => {
-    const model = new MockLanguageModelV3({
+    const model = new MockLanguageModelV4({
       doGenerate: async () => ({
         content: [{ type: "text", text: "ok" }],
         finishReason: { unified: "stop", raw: "stop" },
         usage: usage(10, 5),
+        warnings: [],
       }),
     });
 
@@ -49,8 +49,6 @@ describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild
       (m) => m.role === "user" && JSON.stringify(m.content).includes("turn one")
     );
 
-    // BUG: buildHistoryFromResult drops the image, then buildMessages drops
-    // the whole (now array-typed) user message on replay, so this is undefined.
     expect(turnOneUserMessage).toBeDefined();
 
     const content = turnOneUserMessage!.content as Array<{ type: string }>;
@@ -58,11 +56,12 @@ describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild
   });
 
   it("b) a 'length' finish is reported as max_tokens, not max_iterations", async () => {
-    const model = new MockLanguageModelV3({
+    const model = new MockLanguageModelV4({
       doGenerate: async () => ({
         content: [{ type: "text", text: "Partial response..." }],
         finishReason: { unified: "length", raw: "length" },
         usage: usage(10, 5),
+        warnings: [],
       }),
     });
 
@@ -74,9 +73,7 @@ describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild
 
     const result = await agent.run("Test");
 
-    // "max_tokens" does not exist on the current StopReason union; the cast
-    // below is the one sanctioned exception (design's not-yet-existing type).
-    expect(result.stopReason).toBe("max_tokens" as StopReason);
+    expect(result.stopReason).toBe("max_tokens");
   });
 
   it("c) a step-capped tool-call run is reported as max_iterations, not end_turn", async () => {
@@ -86,7 +83,7 @@ describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild
       handler: async ({ value }) => value,
     });
 
-    const model = new MockLanguageModelV3({
+    const model = new MockLanguageModelV4({
       doGenerate: async () => ({
         content: [
           {
@@ -98,6 +95,7 @@ describe("regressions (red against current ai 6 agent, fixed by the ai 7 rebuild
         ],
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: usage(10, 5),
+        warnings: [],
       }),
     });
 
