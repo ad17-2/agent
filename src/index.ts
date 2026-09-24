@@ -13,6 +13,7 @@ export {
 } from "./structured.js";
 export { AgentError, type AgentErrorCode } from "./errors.js";
 export { costOf, sumCost } from "./cost.js";
+export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } from "./context.js";
 
 export type {
   AgentOptions,
@@ -43,6 +44,7 @@ export type {
   ModelPrice,
   PriceTable,
   Cost,
+  ContextConfig,
 } from "./types.js";
 
 export { z } from "zod";

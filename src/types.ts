@@ -83,6 +83,11 @@ export interface ConversationConfig {
   ttlMs?: number;
 }
 
+export interface ContextConfig {
+  maxInputTokens: number;
+  summarize?: { model?: LanguageModel; keepRecentTurns?: number; instructions?: string };
+}
+
 // History is stored as the SDK's own messages, so nothing is lost on replay.
 export type Message = ModelMessage & { timestamp?: number };
 
@@ -187,6 +192,7 @@ export interface AgentOptions extends AgentHooks {
   retry?: RetryConfig;
   timeout?: TimeoutConfig;
   pricing?: PriceTable;
+  context?: ContextConfig;
   logger?: Logger;
   traceId?: string;
 }

@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   AgentOptions,
   AgentResult,
+  Cost,
   Message,
   RetryConfig,
   RunOptions,
@@ -16,6 +17,7 @@ import type {
 import { createTimeoutSignal, executeWithRetry, type RetryOptions } from "../utils/index.js";
 import { calculateBackoff, sleep } from "../utils/async.js";
 import { sumCost } from "../cost.js";
+import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
 import { toAgentEvent, toTokenUsage } from "./events.js";
 import { HistoryManager } from "./history.js";
 import { toStopReason, type SignalState } from "./stop-reason.js";
@@ -125,6 +127,7 @@ export function createAgent(options: AgentOptions): Agent {
     retry: retryConfig,
     timeout: timeoutConfig,
     pricing,
+    context: contextConfig,
     logger,
     traceId: agentTraceId,
     onStart,
@@ -188,7 +191,50 @@ export function createAgent(options: AgentOptions): Agent {
     maxOutputTokens: maxTokens,
     maxRetries: 0,
     providerOptions,
+    prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
   });
+
+  /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
+  async function summarizeIfOverBudget(): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
+    if (!contextConfig || estimateTokens(historyManager.get()) <= contextConfig.maxInputTokens) {
+      return { extraUsage: zeroUsage() };
+    }
+
+    const summarizeModel = contextConfig.summarize?.model ?? model;
+    const { messages, usage } = await summarizeHistory(historyManager.get(), contextConfig, model);
+    historyManager.save(messages);
+
+    log("info", "History summarized", { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
+
+    return {
+      extraUsage: toTokenUsage(usage),
+      extraCost: pricing ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing) : undefined,
+    };
+  }
+
+  function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+    return {
+      inputTokens: a.inputTokens + b.inputTokens,
+      outputTokens: a.outputTokens + b.outputTokens,
+      totalTokens: a.totalTokens + b.totalTokens,
+      cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+      cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+      reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+    };
+  }
+
+  function addCost(a: Cost | undefined, b: Cost | undefined): Cost | undefined {
+    if (!a) return b;
+    if (!b) return a;
+    return {
+      inputUsd: a.inputUsd + b.inputUsd,
+      outputUsd: a.outputUsd + b.outputUsd,
+      cacheReadUsd: a.cacheReadUsd + b.cacheReadUsd,
+      cacheWriteUsd: a.cacheWriteUsd + b.cacheWriteUsd,
+      totalUsd: a.totalUsd + b.totalUsd,
+      unpricedModels: [...new Set([...a.unpricedModels, ...b.unpricedModels])],
+    };
+  }
 
   function resolveSignal(runOptions: RunOptions | undefined) {
     const { signal: userSignal, timeoutMs } = runOptions ?? {};
@@ -225,6 +271,8 @@ export function createAgent(options: AgentOptions): Agent {
 
       await onStart?.(input);
 
+      const { extraUsage, extraCost } = await summarizeIfOverBudget();
+
       const userMessage = buildUserMessage(input, attachments);
       const messages: Message[] = [...historyManager.get(), userMessage];
       const toolsCalled: ToolCallRecord[] = [];
@@ -247,7 +295,7 @@ export function createAgent(options: AgentOptions): Agent {
           signal
         );
 
-        const usage = toTokenUsage(result.usage);
+        const usage = addUsage(toTokenUsage(result.usage), extraUsage);
         const stopReason = toStopReason(result.finishReason, result.steps, maxIterations, undefined);
 
         historyManager.append(userMessage, result.responseMessages);
@@ -258,7 +306,7 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: result.steps.length,
           stopReason,
           usage,
-          cost: pricing ? sumCost(result.steps, pricing) : undefined,
+          cost: pricing ? addCost(sumCost(result.steps, pricing), extraCost) : undefined,
           thinking: result.finalStep.reasoningText,
         };
 
@@ -332,6 +380,8 @@ export function createAgent(options: AgentOptions): Agent {
 
       await onStart?.(input);
 
+      const { extraUsage, extraCost } = await summarizeIfOverBudget();
+
       const userMessage = buildUserMessage(input, attachments);
       const messages: Message[] = [...historyManager.get(), userMessage];
       const toolsCalled: ToolCallRecord[] = [];
@@ -383,7 +433,7 @@ export function createAgent(options: AgentOptions): Agent {
 
         const streamResult = next.value;
         const text = await streamResult.text;
-        const finalUsage = toTokenUsage(await streamResult.usage);
+        const finalUsage = addUsage(toTokenUsage(await streamResult.usage), extraUsage);
         const finishReason = await streamResult.finishReason;
         const steps = await streamResult.steps;
         const responseMessages = await streamResult.responseMessages;
@@ -401,7 +451,7 @@ export function createAgent(options: AgentOptions): Agent {
           iterations: steps.length,
           stopReason,
           usage: finalUsage,
-          cost: pricing ? sumCost(steps, pricing) : undefined,
+          cost: pricing ? addCost(sumCost(steps, pricing), extraCost) : undefined,
           thinking: reasoningText,
         };
 

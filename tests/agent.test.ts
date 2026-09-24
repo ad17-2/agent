@@ -535,3 +535,96 @@ describe("agent.stream", () => {
     expect(completeEvent?.result.stopReason).toBe("error");
   });
 });
+
+describe("createAgent with a context budget", () => {
+  it("summarizes over-budget history before the next call, and never splits a tool call from its result", async () => {
+    let callIndex = 0;
+    const model = mockModel(async () => {
+      callIndex++;
+      if (callIndex === 1) {
+        // first run: makes a tool call
+        return {
+          content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: "{}" }],
+          finishReason: { unified: "tool-calls", raw: "tool_use" },
+          usage: usage(),
+          warnings: [],
+        };
+      }
+      if (callIndex === 2) {
+        // continuation after the tool result, within the same run() call
+        return {
+          content: [{ type: "text", text: "first answer" }],
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: usage(),
+          warnings: [],
+        };
+      }
+      return {
+        content: [{ type: "text", text: "second answer" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      };
+    });
+
+    const summarizer = mockModel(async () => ({
+      content: [{ type: "text", text: "SUMMARY: earlier turn discussed lookups" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {
+        lookup: defineTool({
+          description: "look something up",
+          schema: z.object({}),
+          handler: async () => "looked up",
+        }),
+      },
+      context: { maxInputTokens: 1, summarize: { model: summarizer, keepRecentTurns: 0 } },
+    });
+
+    await agent.run("First question that triggers a tool call");
+    const result = await agent.run("Second question");
+
+    expect(result.message).toBe("second answer");
+
+    const secondRunCall = model.doGenerateCalls[2];
+    expect(secondRunCall).toBeDefined();
+
+    const promptText = JSON.stringify(secondRunCall!.prompt);
+    expect(promptText).toContain("SUMMARY: earlier turn discussed lookups");
+    expect(promptText).toContain("Second question");
+
+    // the tool call and its result from the first turn must have been summarized away together,
+    // not split (no orphaned call-1 reference left dangling in the prompt sent to the model)
+    expect(promptText).not.toContain("call-1");
+  });
+
+  it("does not summarize when history is under the configured budget", async () => {
+    const model = mockModel(async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: [],
+    }));
+
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      context: { maxInputTokens: 1_000_000 },
+    });
+
+    await agent.run("First");
+    await agent.run("Second");
+
+    const secondCall = model.doGenerateCalls[1];
+    const promptText = JSON.stringify(secondCall!.prompt);
+    expect(promptText).toContain("First");
+    expect(promptText).toContain("Second");
+  });
+});
