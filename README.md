@@ -112,16 +112,17 @@ const result = await agent.run("Hello!");
 
 #### ThinkingConfig
 
+Setting `thinking` enables Anthropic extended thinking; leaving it unset sends no thinking option.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable extended thinking |
 | `budgetTokens` | `number` | `10000` | Token budget for thinking |
 
 #### RetryConfig
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `maxAttempts` | `number` | `3` | Maximum retry attempts |
+| `maxAttempts` | `number` | `3` | Total attempts per model call, including the first |
 | `backoff` | `BackoffStrategy` | `"exponential"` | `"fixed"`, `"linear"`, or `"exponential"` |
 | `initialDelayMs` | `number` | `1000` | Initial delay between retries |
 | `maxDelayMs` | `number` | `30000` | Maximum delay between retries |
@@ -145,7 +146,7 @@ An explicit `undefined` for any field takes that field's default.
 | `attachments` | `Attachment[]` | Array of images, PDFs, or files |
 | `abortSignal` | `AbortSignal` | Abort signal for cancellation |
 | `timeoutMs` | `number` | Override `timeout.totalMs` for this call; `0` disables it for this call even when `timeout.totalMs` is set |
-| `traceId` | `string` | Override trace ID for this call |
+| `traceId` | `string` | Trace ID for this call's logs; also this call's telemetry `functionId` when `telemetry.functionId` is unset |
 
 #### AgentResult
 
@@ -157,7 +158,7 @@ An explicit `undefined` for any field takes that field's default.
 | `stopReason` | `StopReason` | `"end_turn"`, `"max_iterations"`, `"max_tokens"`, `"content_filter"`, `"error"`, `"aborted"`, `"timeout"`, `"other"` |
 | `usage` | `TokenUsage` | Token usage statistics, including any history-summarization usage folded in ([details](#context-budget)) |
 | `cost` | `Cost` \| `undefined` | Present only when `pricing` is set ([details](#cost-tracking)) |
-| `thinking` | `string` | Extended thinking output (if enabled) |
+| `thinking` | `string` | Reasoning text of the final step, when the model returned any |
 
 `aborted` and `timeout` are returned as a result (with empty `message` and zero `usage`), never thrown. Which one you get depends on which signal fired: the run timeout (`timeout.totalMs` / `RunOptions.timeoutMs`) yields `timeout` and calls `onError` with `phase: "timeout"`; the caller's `RunOptions.abortSignal` yields `aborted` and calls no `onError`. Error message text is never used to tell them apart, so an API error that happens to say "timed out" is still thrown as `AgentError("API_ERROR")`. A run ended by either signal appends nothing to history.
 
@@ -394,7 +395,7 @@ Two mechanisms work together:
 
 ### Telemetry
 
-`telemetry` (the SDK's own `TelemetryOptions`) is forwarded straight into `ToolLoopAgent`. `traceId` (agent- or run-level) is used as `telemetry.functionId` when the caller doesn't already set one — `ai` 7 does not expose a `metadata` field on `TelemetryOptions` to attach a trace id to directly.
+`telemetry` (the SDK's own `TelemetryOptions`) is forwarded straight into `ToolLoopAgent`. The telemetry `functionId` is `telemetry.functionId`, else the run's `RunOptions.traceId`, else the agent's `traceId`, resolved per call. `ai` 7 does not expose a `metadata` field on `TelemetryOptions` to attach a trace id to directly.
 
 The package itself does not register an exporter; call the SDK's `registerTelemetry` with an integration before creating the agent.
 
@@ -623,10 +624,7 @@ const agent = createAgent({
   model: anthropic("claude-sonnet-5"),
   systemPrompt: "You are a reasoning assistant.",
   tools: {},
-  thinking: {
-    enabled: true,
-    budgetTokens: 20000, // Token budget for thinking
-  },
+  thinking: { budgetTokens: 20000 },
 });
 
 const result = await agent.run("Solve this complex problem...");

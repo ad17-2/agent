@@ -30,7 +30,7 @@ export function buildProviderOptions(
   thinking: ThinkingConfig | undefined,
   extra: ProviderOptions | undefined
 ): ProviderOptions | undefined {
-  const fromThinking: ProviderOptions | undefined = thinking?.enabled
+  const fromThinking: ProviderOptions | undefined = thinking
     ? {
         anthropic: {
           thinking: {

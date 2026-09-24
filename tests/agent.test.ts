@@ -355,7 +355,7 @@ describe("createAgent", () => {
       model,
       systemPrompt: "Test",
       tools: {},
-      thinking: { enabled: true },
+      thinking: {},
     });
 
     const result = await agent.run("Complex question");

@@ -34,8 +34,8 @@ export interface TimeoutConfig {
   toolMs?: number;
 }
 
+/** Setting `thinking` enables extended thinking. */
 export interface ThinkingConfig {
-  enabled: boolean;
   budgetTokens?: number;
 }
 

@@ -60,6 +60,7 @@ interface Turn {
   kind: "run" | "stream";
   input: string;
   attachments: Attachment[] | undefined;
+  traceId: string | undefined;
   run: RunSignal;
   recorder: StepRecorder;
 }
@@ -137,7 +138,7 @@ export function createAgent(options: AgentOptions): Agent {
     });
   }
 
-  const sdkAgent = new ToolLoopAgent({
+  const sdkAgent = new ToolLoopAgent<{ traceId?: string }, ToolSet>({
     model: modelOption,
     instructions: systemPrompt,
     tools: wrapToolsWithCallbacks(
@@ -150,14 +151,18 @@ export function createAgent(options: AgentOptions): Agent {
     maxOutputTokens,
     maxRetries: 0,
     providerOptions: buildProviderOptions(thinking, extraProviderOptions),
-    telemetry: telemetryConfig
-      ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
-      : undefined,
-    // Per call: the model is resolved and wrapped now, and trimForStep's calibration is this run's own.
-    prepareCall: (call) => ({
+    // Per call: the model is resolved and wrapped now, trimForStep's calibration is this run's own,
+    // and the run's traceId names its telemetry.
+    prepareCall: ({ options, ...call }) => ({
       ...call,
       model: callModel(modelOption),
       prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+      telemetry: telemetryConfig
+        ? {
+            ...telemetryConfig,
+            functionId: telemetryConfig.functionId ?? options.traceId ?? agentTraceId,
+          }
+        : undefined,
     }),
   });
 
@@ -199,6 +204,7 @@ export function createAgent(options: AgentOptions): Agent {
       kind,
       input,
       attachments,
+      traceId,
       run: createRunSignal(timeoutMs ?? timeoutConfig?.totalMs, abortSignal),
       recorder: new StepRecorder(onStep),
     };
@@ -271,6 +277,7 @@ export function createAgent(options: AgentOptions): Agent {
         const result = await sdkAgent.generate({
           messages: start.messages,
           abortSignal: turn.run.signal,
+          options: { traceId: turn.traceId },
           onStepEnd: (step) => turn.recorder.onStepEnd(step),
         });
 
@@ -319,6 +326,7 @@ export function createAgent(options: AgentOptions): Agent {
         const streamResult = await sdkAgent.stream({
           messages: start.messages,
           abortSignal: run.signal,
+          options: { traceId: turn.traceId },
           onToolExecutionEnd: (event) => recorder.onToolExecutionEnd(event),
           onStepEnd: (step) => recorder.onStepEnd(step),
         });
