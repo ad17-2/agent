@@ -2,14 +2,14 @@
  * Prints ai.* / agent.* spans to the console. Runs with no API key: the model is a
  * MockLanguageModelV4, so this only proves the telemetry wiring, not a real call.
  *
- *   pnpm exec tsx examples/telemetry-console.ts
+ *   pnpm example:telemetry
  */
 import { registerTelemetry } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { ConsoleSpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { createAgent } from "../src/index.js";
+import { createAgent } from "@ad17-2/agent";
 
 const provider = new NodeTracerProvider({
   spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],

@@ -28,6 +28,7 @@
     "lint:fix": "oxlint --type-aware --fix src tests examples",
     "format": "biome format --write src tests examples",
     "format:check": "biome format src tests examples",
+    "example:telemetry": "pnpm build && node examples/telemetry-console.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -58,7 +59,6 @@
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2002",
     "tsdown": "0.23.0",
-    "tsx": "^4.23.15",
     "typescript": "7.0.2",
     "vitest": "^5.0.1"
   },

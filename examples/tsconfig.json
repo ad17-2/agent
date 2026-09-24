@@ -2,7 +2,11 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".."
+    "rootDir": "..",
+    "paths": {
+      "@ad17-2/agent": ["../src/index.ts"],
+      "@ad17-2/agent/mcp": ["../src/mcp.ts"]
+    }
   },
   "include": ["../src/**/*", "./**/*"],
   "exclude": ["../node_modules", "../dist"]
