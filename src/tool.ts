@@ -2,7 +2,7 @@ import { tool as aiTool, type Tool } from "ai";
 import type { z } from "zod";
 
 export interface ToolContext {
-  signal?: AbortSignal;
+  abortSignal?: AbortSignal;
   toolCallId?: string;
 }
 
@@ -21,7 +21,6 @@ export interface ToolOptions<TInput extends z.ZodType> {
   timeoutMs?: number;
 }
 
-/** A `Tool` returned by `defineTool`, carrying its own timeout for `tool-wrapper.ts` to read. */
 export type DefinedTool = Tool & { timeoutMs?: number };
 
 export type { Tool };
@@ -34,7 +33,7 @@ export function defineTool<TInput extends z.ZodType>(options: ToolOptions<TInput
     inputSchema: schema,
     execute: async (input: z.infer<TInput>, execOptions) => {
       const context: ToolContext = {
-        signal: execOptions?.abortSignal,
+        abortSignal: execOptions?.abortSignal,
         toolCallId: execOptions?.toolCallId,
       };
 

@@ -1,6 +1,7 @@
-export { createAgent, type Agent } from "./agent/index.js";
+export { createAgent } from "./agent/index.js";
 export {
   defineTool,
+  type DefinedTool,
   type Tool,
   type ToolOptions,
   type ToolContext,
@@ -16,6 +17,7 @@ export { costOf, sumCost } from "./cost.js";
 export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } from "./context.js";
 
 export type {
+  Agent,
   AgentOptions,
   AgentResult,
   RunOptions,
@@ -29,12 +31,15 @@ export type {
   AgentEvent,
   StepInfo,
   AgentHooks,
+  ErrorContext,
   Attachment,
   Base64ImageAttachment,
   UrlImageAttachment,
   Base64PdfAttachment,
   UrlPdfAttachment,
   FileAttachment,
+  ImageMimeType,
+  AttachmentMimeType,
   ThinkingConfig,
   RetryConfig,
   TimeoutConfig,
@@ -45,6 +50,7 @@ export type {
   PriceTable,
   Cost,
   ContextConfig,
+  ProviderOptions,
 } from "./types.js";
 
 export { z } from "zod";

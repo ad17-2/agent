@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { defineTool } from "../src/tool.js";
+import { executeOptions } from "./helpers.js";
 
 describe("defineTool", () => {
   it("creates a tool with description and schema", () => {
@@ -27,15 +28,7 @@ describe("defineTool", () => {
       handler: async ({ name }) => `Hello, ${name}!`,
     });
 
-    const result = await tool.execute!(
-      { name: "World" },
-      {
-        toolCallId: "test-id",
-        abortSignal: undefined,
-        context: undefined,
-        messages: [],
-      }
-    );
+    const result = await tool.execute!({ name: "World" }, executeOptions("test-id"));
 
     expect(result).toBe("Hello, World!");
   });
@@ -48,20 +41,12 @@ describe("defineTool", () => {
       description: "Check signal",
       schema: z.object({}),
       handler: async (_, ctx) => {
-        receivedSignal = ctx.signal;
+        receivedSignal = ctx.abortSignal;
         return "done";
       },
     });
 
-    await tool.execute!(
-      {},
-      {
-        toolCallId: "test-id",
-        abortSignal: controller.signal,
-        context: undefined,
-        messages: [],
-      }
-    );
+    await tool.execute!({}, executeOptions("test-id", controller.signal));
 
     expect(receivedSignal).toBe(controller.signal);
   });
@@ -78,15 +63,7 @@ describe("defineTool", () => {
       },
     });
 
-    await tool.execute!(
-      {},
-      {
-        toolCallId: "my-tool-call-123",
-        abortSignal: undefined,
-        context: undefined,
-        messages: [],
-      }
-    );
+    await tool.execute!({}, executeOptions("my-tool-call-123"));
 
     expect(receivedToolCallId).toBe("my-tool-call-123");
   });
@@ -103,15 +80,7 @@ describe("defineTool", () => {
       onError,
     });
 
-    const result = await tool.execute!(
-      { value: 42 },
-      {
-        toolCallId: "error-test",
-        abortSignal: undefined,
-        context: undefined,
-        messages: [],
-      }
-    );
+    const result = await tool.execute!({ value: 42 }, executeOptions("error-test"));
 
     expect(onError).toHaveBeenCalledWith({
       error: expect.any(Error),
@@ -130,17 +99,7 @@ describe("defineTool", () => {
       },
     });
 
-    await expect(
-      tool.execute!(
-        {},
-        {
-          toolCallId: "test",
-          abortSignal: undefined,
-          context: undefined,
-          messages: [],
-        }
-      )
-    ).rejects.toThrow("Unhandled error");
+    await expect(tool.execute!({}, executeOptions("test"))).rejects.toThrow("Unhandled error");
   });
 
   it("carries timeoutMs for agent/tool-wrapper.ts to enforce, without racing it itself", async () => {
@@ -148,23 +107,15 @@ describe("defineTool", () => {
       description: "Slow tool",
       schema: z.object({}),
       handler: async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 30));
         return "completed";
       },
-      timeoutMs: 50,
+      timeoutMs: 5,
     });
 
-    expect(tool.timeoutMs).toBe(50);
+    expect(tool.timeoutMs).toBe(5);
 
-    const result = await tool.execute!(
-      {},
-      {
-        toolCallId: "fast-test",
-        abortSignal: undefined,
-        context: undefined,
-        messages: [],
-      }
-    );
+    const result = await tool.execute!({}, executeOptions("fast-test"));
 
     expect(result).toBe("completed");
   });
@@ -182,15 +133,7 @@ describe("defineTool", () => {
       },
     });
 
-    const result = await tool.execute!(
-      {},
-      {
-        toolCallId: "async-error",
-        abortSignal: undefined,
-        context: undefined,
-        messages: [],
-      }
-    );
+    const result = await tool.execute!({}, executeOptions("async-error"));
 
     expect(result).toEqual({ recovered: true, message: "Failed" });
   });

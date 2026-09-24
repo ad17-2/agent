@@ -30,12 +30,12 @@ export interface RetryConfig {
 }
 
 export interface TimeoutConfig {
-  runTimeoutMs?: number;
-  toolTimeoutMs?: number;
+  totalMs?: number;
+  toolMs?: number;
 }
 
+/** Setting `thinking` enables extended thinking. */
 export interface ThinkingConfig {
-  enabled: boolean;
   budgetTokens?: number;
 }
 
@@ -147,8 +147,8 @@ export interface ToolCallRecord {
   input: unknown;
   output: unknown;
   durationMs: number;
-  error?: boolean;
-  errorMessage?: string;
+  /** The failure message; present only when the call failed. */
+  error?: string;
 }
 
 export type AgentEvent =
@@ -175,15 +175,17 @@ export interface StepInfo {
   textGenerated: string;
 }
 
+export type ErrorContext =
+  | { phase: "tool"; toolName: string }
+  | { phase: "api" }
+  | { phase: "timeout" };
+
 export interface AgentHooks {
   onStart?: (input: string) => void | Promise<void>;
   onStep?: (step: StepInfo) => void | Promise<void>;
   onToolCall?: (toolName: string, input: unknown) => void | Promise<void>;
   onToolResult?: (toolName: string, result: unknown) => void | Promise<void>;
-  onError?: (
-    error: Error,
-    context: { phase: "tool" | "api" | "timeout"; toolName?: string }
-  ) => void | Promise<void>;
+  onError?: (error: Error, context: ErrorContext) => void | Promise<void>;
   onComplete?: (result: AgentResult) => void | Promise<void>;
 }
 
@@ -192,7 +194,7 @@ export interface AgentOptions extends AgentHooks {
   systemPrompt: string;
   tools: ToolSet;
   maxIterations?: number;
-  maxTokens?: number;
+  maxOutputTokens?: number;
   conversation?: ConversationConfig;
   thinking?: ThinkingConfig;
   providerOptions?: ProviderOptions;
@@ -207,7 +209,8 @@ export interface AgentOptions extends AgentHooks {
 
 export interface RunOptions {
   attachments?: Attachment[];
-  signal?: AbortSignal;
+  abortSignal?: AbortSignal;
+  /** Overrides `timeout.totalMs` for this call; `0` disables it. */
   timeoutMs?: number;
   traceId?: string;
 }
@@ -230,6 +233,14 @@ export interface AgentResult {
   usage: TokenUsage;
   cost?: Cost;
   thinking?: string;
+}
+
+export interface Agent {
+  run(input: string, options?: RunOptions): Promise<AgentResult>;
+  stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
+  clearHistory(): void;
+  exportHistory(): SerializedHistory;
+  importHistory(history: SerializedHistory | SerializedHistoryV1): void;
 }
 
 export type { Tool, ToolSet };

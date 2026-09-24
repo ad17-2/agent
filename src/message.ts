@@ -27,7 +27,6 @@ function attachmentToPart(attachment: Attachment): UserContentPart {
   }
 }
 
-/** Builds the user turn for a run, converting attachments to `{type:'file', mediaType, data}` parts. */
 export function buildUserMessage(input: string, attachments?: Attachment[]): ModelMessage {
   if (!attachments || attachments.length === 0) {
     return { role: "user", content: input };

@@ -1,16 +1,67 @@
 # Changelog
 
+## [0.6.0] - Unreleased
+
+### Breaking
+
+- `AgentOptions.maxTokens` is `maxOutputTokens`.
+- `TimeoutConfig.{runTimeoutMs, toolTimeoutMs}` is `{totalMs, toolMs}`, the names the AI SDK's `TimeoutConfiguration` uses. `RunOptions.timeoutMs` is unchanged and overrides `totalMs` for one call.
+- `RunOptions.signal`, `GenerateStructuredOptions.signal` and `ToolContext.signal` are `abortSignal`.
+- `ToolCallRecord.error` is the failure message (`string`), present only when the call failed. `errorMessage` is removed.
+- `ThinkingConfig.enabled` is removed. Setting `thinking` enables extended thinking.
+- Error code `TOOL_VALIDATION` is `INVALID_HISTORY`. `TOOL_NOT_FOUND`, `TOOL_EXECUTION`, `MAX_ITERATIONS` and `ABORTED` are removed; nothing threw them.
+- `generateStructured`: `maxTokens` is `maxOutputTokens`, `image` is replaced by `attachments` (the `RunOptions` shape), and `usage` is a full `TokenUsage`.
+- `ErrorContext` is a union: `toolName` exists only when `phase` is `"tool"`.
+
+### Fixed
+
+- `RunOptions.traceId` is used as the telemetry `functionId` for that run. Only the agent-level `traceId` was used.
+- The `step-complete` stream event carries the step's tool records, including failed calls. It was always empty.
+- Tool durations come from the SDK's per-step timing, so a run cannot report another run's duration when tool call ids repeat.
+- A successful `ToolCallRecord` has no `error` key.
+
+### Changed
+
+- `generateStructured` accepts PDFs and files as well as images.
+- `DefinedTool`, `ProviderOptions`, `ImageMimeType` and `AttachmentMimeType` are exported.
+- `package.json` declares `sideEffects: false`.
+- Runnable examples for every feature under `examples/`, run by `pnpm examples` and in CI.
+
+### Migrating from 0.5.x
+
+| 0.5.x | 0.6.0 |
+|-------|-------|
+| `createAgent({ maxTokens })` | `createAgent({ maxOutputTokens })` |
+| `timeout: { runTimeoutMs, toolTimeoutMs }` | `timeout: { totalMs, toolMs }` |
+| `agent.run(input, { signal })` | `agent.run(input, { abortSignal })` |
+| `handler: (input, { signal })` | `handler: (input, { abortSignal })` |
+| `record.error === true`, `record.errorMessage` | `record.error !== undefined`, `record.error` |
+| `thinking: { enabled: true, budgetTokens }` | `thinking: { budgetTokens }` |
+| `thinking: { enabled: false }` | omit `thinking` |
+| `error.code === "TOOL_VALIDATION"` | `error.code === "INVALID_HISTORY"` |
+| `generateStructured({ image: { base64, mimeType } })` | `generateStructured({ attachments: [{ type: "image", source: "base64", base64, mimeType }] })` |
+| `generateStructured({ maxTokens, signal })` | `generateStructured({ maxOutputTokens, abortSignal })` |
+
 ## [0.5.0] - 2026-09-24
 
 ### Breaking Changes
-
-See [Migrating from 0.4.x](README.md#migrating-from-04x) for the full list.
 
 - Requires Node.js >= 22 and `ai` 7. The loop is built on `ToolLoopAgent`.
 - Serialized history is version 2 and stores the SDK's `ModelMessage`s. `importHistory()` still accepts version 1.
 - `ImageInput`, `ContentBlock` and `RunOptions.image` are removed.
 - `stopReason` is mapped from the SDK's finish reason. Aborts and timeouts return a result instead of throwing.
 - `retry.retryOn` defaults to the provider's retryable flag, so a 400 is attempted once.
+
+### Migrating from 0.4.x
+
+- Use Node.js 22 or later. The package is ESM only and built on `ai` 7's `ToolLoopAgent`.
+- Serialized history is version 2: `messages` are the SDK's `ModelMessage`s, so tool calls and results survive export and import. `importHistory()` still accepts a version 1 export and keeps its text.
+- `ImageInput` and `ContentBlock` are removed. Pass images, PDFs and files in `RunOptions.attachments`, which keeps its shape.
+- `RunOptions.image` is removed. Use `attachments`.
+- `stopReason` values follow the SDK's finish reason. The output-token cap is `max_tokens` and the step cap is `max_iterations`. `content_filter`, `aborted`, `timeout` and `other` are returned. Aborts and timeouts return a result instead of throwing `AgentError("ABORTED")`.
+- `TokenUsage` reports `cacheReadTokens`, `cacheWriteTokens` and `reasoningTokens`.
+- A tool timeout aborts the tool's signal instead of only racing it.
+- `retry.retryOn` defaults to the provider's own classification (429, 5xx, overloaded, failed connections), so a 400 or 401 is attempted once. Pass your own `retryOn` to retry everything.
 
 ### Added
 

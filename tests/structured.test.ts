@@ -2,18 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { MockLanguageModelV4 } from "ai/test";
 import { generateStructured } from "../src/structured.js";
-
-function usage(inputTokens = 50, outputTokens = 25) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 describe("generateStructured", () => {
   it("returns parsed data matching schema", async () => {
@@ -31,11 +20,17 @@ describe("generateStructured", () => {
     const result = await generateStructured({ model, schema, prompt: "Extract person info" });
 
     expect(result.data).toEqual({ name: "Alice", age: 30 });
-    expect(result.usage.inputTokens).toBe(50);
-    expect(result.usage.outputTokens).toBe(25);
+    expect(result.usage).toEqual({
+      inputTokens: 50,
+      outputTokens: 25,
+      totalTokens: 75,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    });
   });
 
-  it("converts image input to a `{type:'file', mediaType, data}` part", async () => {
+  it("sends attachments as `{type:'file', mediaType, data}` parts before the prompt", async () => {
     const schema = z.object({ description: z.string() });
 
     const model = new MockLanguageModelV4({
@@ -51,7 +46,7 @@ describe("generateStructured", () => {
       model,
       schema,
       prompt: "Describe this image",
-      image: { base64: "aGVsbG8=", mimeType: "image/png" },
+      attachments: [{ type: "image", source: "base64", base64: "aGVsbG8=", mimeType: "image/png" }],
     });
 
     const call = model.doGenerateCalls[0];
@@ -65,10 +60,10 @@ describe("generateStructured", () => {
       data?: unknown;
     }>;
 
-    expect(content.some((part) => part.type === "file" && part.mediaType === "image/png")).toBe(
-      true
-    );
-    expect(content.every((part) => part.type !== "image")).toBe(true);
+    expect(content.map((part) => [part.type, part.mediaType])).toEqual([
+      ["file", "image/png"],
+      ["text", undefined],
+    ]);
   });
 
   it("handles missing usage gracefully", async () => {
@@ -113,10 +108,10 @@ describe("generateStructured", () => {
       },
     });
 
-    await generateStructured({ model, schema, prompt: "Check", signal: controller.signal });
+    await generateStructured({ model, schema, prompt: "Check", abortSignal: controller.signal });
   });
 
-  it("maps maxTokens to the SDK's maxOutputTokens call param", async () => {
+  it("passes maxOutputTokens to the model call", async () => {
     const schema = z.object({ text: z.string() });
 
     const model = new MockLanguageModelV4({
@@ -131,6 +126,6 @@ describe("generateStructured", () => {
       },
     });
 
-    await generateStructured({ model, schema, prompt: "Get text", maxTokens: 1000 });
+    await generateStructured({ model, schema, prompt: "Get text", maxOutputTokens: 1000 });
   });
 });

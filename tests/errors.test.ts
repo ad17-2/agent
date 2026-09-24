@@ -13,34 +13,18 @@ describe("AgentError", () => {
 
   it("includes cause when provided", () => {
     const cause = new Error("Original error");
-    const error = new AgentError("Wrapped error", "TOOL_EXECUTION", cause);
+    const error = new AgentError("Wrapped error", "API_ERROR", cause);
 
     expect(error.cause).toBe(cause);
   });
 
   it("is detects AgentError instances", () => {
-    const agentError = new AgentError("Test", "ABORTED");
+    const agentError = new AgentError("Test", "INVALID_HISTORY");
     const regularError = new Error("Test");
 
     expect(AgentError.is(agentError)).toBe(true);
     expect(AgentError.is(regularError)).toBe(false);
     expect(AgentError.is(null)).toBe(false);
     expect(AgentError.is(undefined)).toBe(false);
-  });
-
-  it("supports all error codes", () => {
-    const codes = [
-      "TOOL_NOT_FOUND",
-      "TOOL_VALIDATION",
-      "TOOL_EXECUTION",
-      "API_ERROR",
-      "MAX_ITERATIONS",
-      "ABORTED",
-    ] as const;
-
-    for (const code of codes) {
-      const error = new AgentError("Test", code);
-      expect(error.code).toBe(code);
-    }
   });
 });

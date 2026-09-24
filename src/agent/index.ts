@@ -1,8 +1,8 @@
 import {
   ToolLoopAgent,
-  gateway,
-  stepCountIs,
+  isStepCount,
   wrapLanguageModel,
+  type FinishReason,
   type LanguageModel,
   type StepResult,
   type ToolSet,
@@ -10,34 +10,40 @@ import {
 import { AgentError } from "../errors.js";
 import { buildUserMessage } from "../message.js";
 import type {
+  Agent,
   AgentEvent,
   AgentOptions,
   AgentResult,
+  Attachment,
   Cost,
+  LogLevel,
   Message,
-  ProviderOptions,
   RetryConfig,
   RunOptions,
   SerializedHistory,
   SerializedHistoryV1,
   TokenUsage,
-  ToolCallRecord,
 } from "../types.js";
 import {
   createRunSignal,
   isRetryableError,
   retryMiddleware,
   type RetryOptions,
+  type RunSignal,
 } from "../utils/index.js";
-import { sumCost } from "../cost.js";
-import { estimateTokens, modelIdOf, summarizeHistory, trimForStep } from "../context.js";
-import { toAgentEvent, toTokenUsage } from "./events.js";
+import type { SignalState } from "../utils/timeout.js";
+import { addCost, sumCost } from "../cost.js";
+import { estimateTokens, summarizeHistory, trimForStep } from "../context.js";
+import { addUsage, toTokenUsage, zeroUsage } from "../usage.js";
+import { toAgentEvent } from "./events.js";
 import { HistoryManager } from "./history.js";
+import { buildProviderOptions, modelIdOf, resolveModel } from "./model.js";
+import { StepRecorder } from "./recorder.js";
 import { toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_MAX_MESSAGES = 20;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const DEFAULT_TTL_MS = TEN_MINUTES_MS;
@@ -50,79 +56,28 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   retryOn: isRetryableError,
 };
 
-export interface Agent {
-  run(input: string, options?: RunOptions): Promise<AgentResult>;
-  stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
-  clearHistory(): void;
-  exportHistory(): SerializedHistory;
-  importHistory(history: SerializedHistory | SerializedHistoryV1): void;
+interface Turn {
+  kind: "run" | "stream";
+  input: string;
+  attachments: Attachment[] | undefined;
+  traceId: string | undefined;
+  run: RunSignal;
+  recorder: StepRecorder;
 }
 
-function zeroUsage(): TokenUsage {
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    reasoningTokens: 0,
-  };
+interface TurnStart {
+  userMessage: Message;
+  messages: Message[];
+  extra: { usage: TokenUsage; cost?: Cost };
 }
 
-function buildToolCallRecords(
-  step: StepResult<ToolSet>,
-  toolTimings: ReadonlyMap<string, number>
-): ToolCallRecord[] {
-  const errorsById = new Map(
-    step.content
-      .filter(
-        (part): part is Extract<typeof part, { type: "tool-error" }> => part.type === "tool-error"
-      )
-      .map((part) => [part.toolCallId, part])
-  );
-  const resultsById = new Map(step.toolResults.map((result) => [result.toolCallId, result]));
-
-  return step.toolCalls.map((call) => {
-    const errorPart = errorsById.get(call.toolCallId);
-    const result = resultsById.get(call.toolCallId);
-
-    return {
-      name: call.toolName,
-      input: call.input,
-      output: result?.output,
-      durationMs: toolTimings.get(call.toolCallId) ?? 0,
-      error: errorPart ? true : undefined,
-      errorMessage: errorPart
-        ? errorPart.error instanceof Error
-          ? errorPart.error.message
-          : String(errorPart.error)
-        : undefined,
-    };
-  });
-}
-
-/** String model ids resolve like the SDK does: through the global default provider, else the gateway. */
-function resolveModel(model: LanguageModel) {
-  return typeof model === "string"
-    ? (globalThis.AI_SDK_DEFAULT_PROVIDER ?? gateway).languageModel(model)
-    : model;
-}
-
-/** Merges per provider key, so caller options under `anthropic` do not wipe the `thinking` entry. */
-function mergeProviderOptions(base: ProviderOptions, extra: ProviderOptions): ProviderOptions {
-  const merged: ProviderOptions = { ...base };
-  for (const [provider, options] of Object.entries(extra)) {
-    merged[provider] = { ...merged[provider], ...options };
-  }
-  return merged;
-}
-
-function signalResult(
-  stopReason: "aborted" | "timeout",
-  toolsCalled: ToolCallRecord[],
-  iterations: number
-): AgentResult {
-  return { message: "", toolsCalled, iterations, stopReason, usage: zeroUsage() };
+interface TurnEnd {
+  text: string;
+  usage: Parameters<typeof toTokenUsage>[0];
+  finishReason: FinishReason;
+  steps: ReadonlyArray<StepResult<ToolSet>>;
+  responseMessages: Message[];
+  reasoningText: string | undefined;
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -131,7 +86,7 @@ export function createAgent(options: AgentOptions): Agent {
     systemPrompt,
     tools,
     maxIterations = DEFAULT_MAX_ITERATIONS,
-    maxTokens = DEFAULT_MAX_TOKENS,
+    maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     conversation,
     thinking,
     providerOptions: extraProviderOptions,
@@ -159,11 +114,7 @@ export function createAgent(options: AgentOptions): Agent {
     retryOn: retryConfig?.retryOn ?? DEFAULT_RETRY.retryOn,
   };
 
-  function log(
-    level: "debug" | "info" | "warn" | "error",
-    message: string,
-    meta?: Record<string, unknown>
-  ) {
+  function log(level: LogLevel, message: string, meta?: Record<string, unknown>) {
     logger?.[level](message, meta);
   }
 
@@ -173,15 +124,6 @@ export function createAgent(options: AgentOptions): Agent {
       ttlMs: conversation?.ttlMs ?? DEFAULT_TTL_MS,
     },
     (msg) => log("debug", msg)
-  );
-
-  const toolTimings = new Map<string, number>();
-  const wrappedTools = wrapToolsWithCallbacks(
-    tools,
-    toolTimings,
-    logger,
-    { onToolCall, onToolResult, onError },
-    timeoutConfig
   );
 
   const retryOptions: RetryOptions = {
@@ -196,47 +138,37 @@ export function createAgent(options: AgentOptions): Agent {
     });
   }
 
-  const thinkingProviderOptions = thinking?.enabled
-    ? {
-        anthropic: {
-          thinking: { type: "enabled", budgetTokens: thinking.budgetTokens ?? 10000 },
-        },
-      }
-    : undefined;
-
-  const providerOptions =
-    thinkingProviderOptions || extraProviderOptions
-      ? mergeProviderOptions(thinkingProviderOptions ?? {}, extraProviderOptions ?? {})
-      : undefined;
-
-  // functionId groups telemetry data by function in the exporter's UI; default it to traceId when unset.
-  const telemetry = telemetryConfig
-    ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
-    : undefined;
-
-  const sdkAgent = new ToolLoopAgent({
+  const sdkAgent = new ToolLoopAgent<{ traceId?: string }, ToolSet>({
     model: modelOption,
     instructions: systemPrompt,
-    tools: wrappedTools,
-    stopWhen: stepCountIs(maxIterations),
-    maxOutputTokens: maxTokens,
+    tools: wrapToolsWithCallbacks(
+      tools,
+      logger,
+      { onToolCall, onToolResult, onError },
+      timeoutConfig
+    ),
+    stopWhen: isStepCount(maxIterations),
+    maxOutputTokens,
     maxRetries: 0,
-    providerOptions,
-    telemetry,
-    // Per call: the model is resolved and wrapped now, and trimForStep's calibration is this run's own.
-    prepareCall: (call) => ({
+    providerOptions: buildProviderOptions(thinking, extraProviderOptions),
+    // Per call: the model is resolved and wrapped now, trimForStep's calibration is this run's own,
+    // and the run's traceId names its telemetry.
+    prepareCall: ({ options, ...call }) => ({
       ...call,
       model: callModel(modelOption),
       prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+      telemetry: telemetryConfig
+        ? {
+            ...telemetryConfig,
+            functionId: telemetryConfig.functionId ?? options.traceId ?? agentTraceId,
+          }
+        : undefined,
     }),
   });
 
-  /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
-  async function summarizeIfOverBudget(
-    abortSignal: AbortSignal
-  ): Promise<{ extraUsage: TokenUsage; extraCost?: Cost }> {
+  async function summarizeIfOverBudget(abortSignal: AbortSignal): Promise<TurnStart["extra"]> {
     if (!contextConfig || estimateTokens(historyManager.get()) <= contextConfig.maxInputTokens) {
-      return { extraUsage: zeroUsage() };
+      return { usage: toTokenUsage(zeroUsage()) };
     }
 
     const summarizeModel = callModel(contextConfig.summarize?.model ?? modelOption);
@@ -254,134 +186,123 @@ export function createAgent(options: AgentOptions): Agent {
     });
 
     return {
-      extraUsage: toTokenUsage(usage),
-      extraCost: pricing
+      usage: toTokenUsage(usage),
+      cost: pricing
         ? sumCost([{ model: { modelId: modelIdOf(summarizeModel) }, usage }], pricing)
         : undefined,
     };
   }
 
-  function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  /** Logs the start and arms the run signal; the timer runs from here. */
+  function openTurn(kind: Turn["kind"], input: string, runOptions: RunOptions | undefined): Turn {
+    const { attachments, traceId, timeoutMs, abortSignal } = runOptions ?? {};
+    log("info", `Agent ${kind} started`, {
+      input: input.slice(0, 100),
+      traceId: traceId ?? agentTraceId,
+    });
     return {
-      inputTokens: a.inputTokens + b.inputTokens,
-      outputTokens: a.outputTokens + b.outputTokens,
-      totalTokens: a.totalTokens + b.totalTokens,
-      cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
-      cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
-      reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+      kind,
+      input,
+      attachments,
+      traceId,
+      run: createRunSignal(timeoutMs ?? timeoutConfig?.totalMs, abortSignal),
+      recorder: new StepRecorder(onStep),
     };
   }
 
-  function addCost(a: Cost | undefined, b: Cost | undefined): Cost | undefined {
-    if (!a) return b;
-    if (!b) return a;
+  /** Pre-abort check, onStart, summarisation and the user message; a signal state means the turn is over. */
+  async function startTurn(turn: Turn): Promise<TurnStart | NonNullable<SignalState>> {
+    const state = turn.run.state();
+    if (state) return state;
+
+    await onStart?.(turn.input);
+    const extra = await summarizeIfOverBudget(turn.run.signal);
+    const userMessage = buildUserMessage(turn.input, turn.attachments);
+    return { userMessage, messages: [...historyManager.get(), userMessage], extra };
+  }
+
+  async function finishTurn(turn: Turn, start: TurnStart, end: TurnEnd): Promise<AgentResult> {
+    historyManager.append(start.userMessage, end.responseMessages);
+
+    const stopReason = toStopReason(end.finishReason, end.steps.length, maxIterations);
+    const result: AgentResult = {
+      message: end.text,
+      toolsCalled: turn.recorder.toolsCalled,
+      iterations: end.steps.length,
+      stopReason,
+      usage: addUsage(toTokenUsage(end.usage), start.extra.usage),
+      cost: pricing ? addCost(sumCost(end.steps, pricing), start.extra.cost) : undefined,
+      thinking: end.reasoningText,
+    };
+
+    log("info", `Agent ${turn.kind} completed`, { iterations: result.iterations, stopReason });
+    await onComplete?.(result);
+    return result;
+  }
+
+  function emptyResult(turn: Turn, stopReason: "aborted" | "timeout" | "error"): AgentResult {
     return {
-      inputUsd: a.inputUsd + b.inputUsd,
-      outputUsd: a.outputUsd + b.outputUsd,
-      cacheReadUsd: a.cacheReadUsd + b.cacheReadUsd,
-      cacheWriteUsd: a.cacheWriteUsd + b.cacheWriteUsd,
-      totalUsd: a.totalUsd + b.totalUsd,
-      unpricedModels: [...new Set([...a.unpricedModels, ...b.unpricedModels])],
+      message: "",
+      toolsCalled: turn.recorder.toolsCalled,
+      iterations: turn.recorder.stepIndex,
+      stopReason,
+      usage: toTokenUsage(zeroUsage()),
     };
   }
 
-  function startRun(runOptions: RunOptions | undefined) {
-    return createRunSignal(
-      runOptions?.timeoutMs ?? timeoutConfig?.runTimeoutMs,
-      runOptions?.signal
-    );
-  }
-
-  /** Logs a signal-ended run; a timeout is an error the caller hears about, an abort is not. */
-  async function reportSignal(state: "aborted" | "timeout", reason: unknown, kind: string) {
-    log(state === "timeout" ? "error" : "warn", `Agent ${kind} ${state}`);
+  /** A timeout is an error the caller hears about, an abort is not. */
+  async function endBySignal(turn: Turn, state: NonNullable<SignalState>): Promise<AgentResult> {
+    log(state === "timeout" ? "error" : "warn", `Agent ${turn.kind} ${state}`);
     if (state === "timeout") {
+      const reason = turn.run.signal.reason;
       await onError?.(reason instanceof Error ? reason : new Error(String(reason)), {
         phase: "timeout",
       });
     }
+    return emptyResult(turn, state);
+  }
+
+  async function reportApiError(error: Error, message: string): Promise<void> {
+    log("error", message, { error: error.message });
+    await onError?.(error, { phase: "api" });
   }
 
   return {
     async run(input: string, runOptions?: RunOptions): Promise<AgentResult> {
-      const { attachments, traceId } = runOptions ?? {};
-      const effectiveTraceId = traceId ?? agentTraceId;
-
-      log("info", "Agent run started", { input: input.slice(0, 100), traceId: effectiveTraceId });
-
-      const run = startRun(runOptions);
-      const toolsCalled: ToolCallRecord[] = [];
-      let stepIndex = 0;
-
+      const turn = openTurn("run", input, runOptions);
       try {
-        const initialState = run.state();
-        if (initialState) return signalResult(initialState, toolsCalled, stepIndex);
-
-        await onStart?.(input);
-
-        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
-
-        const userMessage = buildUserMessage(input, attachments);
-        const messages: Message[] = [...historyManager.get(), userMessage];
+        const start = await startTurn(turn);
+        if (typeof start === "string") return endBySignal(turn, start);
 
         const result = await sdkAgent.generate({
-          messages,
-          abortSignal: run.signal,
-          onStepEnd: async (step) => {
-            const stepTools = buildToolCallRecords(step, toolTimings);
-            toolsCalled.push(...stepTools);
-            await onStep?.({ stepIndex, toolsCalled: stepTools, textGenerated: step.text });
-            stepIndex++;
-          },
+          messages: start.messages,
+          abortSignal: turn.run.signal,
+          options: { traceId: turn.traceId },
+          onStepEnd: (step) => turn.recorder.onStepEnd(step),
         });
 
-        const usage = addUsage(toTokenUsage(result.usage), extraUsage);
-        const stopReason = toStopReason(
-          result.finishReason,
-          result.steps,
-          maxIterations,
-          undefined
-        );
-
-        historyManager.append(userMessage, result.responseMessages);
-
-        const agentResult: AgentResult = {
-          message: result.text,
-          toolsCalled,
-          iterations: result.steps.length,
-          stopReason,
-          usage,
-          cost: pricing ? addCost(sumCost(result.steps, pricing), extraCost) : undefined,
-          thinking: result.finalStep.reasoningText,
-        };
-
-        log("info", "Agent run completed", { iterations: agentResult.iterations, stopReason });
-        await onComplete?.(agentResult);
-
-        return agentResult;
+        return await finishTurn(turn, start, {
+          text: result.text,
+          usage: result.usage,
+          finishReason: result.finishReason,
+          steps: result.steps,
+          responseMessages: result.responseMessages,
+          reasoningText: result.finalStep.reasoningText,
+        });
       } catch (error) {
-        const state = run.state();
-        if (state) {
-          await reportSignal(state, run.signal.reason, "run");
-          return signalResult(state, toolsCalled, stepIndex);
-        }
-
-        if (error instanceof AgentError) {
-          throw error;
-        }
+        const state = turn.run.state();
+        if (state) return endBySignal(turn, state);
+        if (error instanceof AgentError) throw error;
 
         const agentError = new AgentError(
           error instanceof Error ? error.message : "Unknown error",
           "API_ERROR",
           error instanceof Error ? error : undefined
         );
-
-        log("error", "Agent run failed", { error: agentError.message });
-        await onError?.(agentError, { phase: "api" });
-
+        await reportApiError(agentError, "Agent run failed");
         throw agentError;
       } finally {
-        run.dispose();
+        turn.run.dispose();
       }
     },
 
@@ -389,136 +310,84 @@ export function createAgent(options: AgentOptions): Agent {
       input: string,
       runOptions?: RunOptions
     ): AsyncGenerator<AgentEvent, AgentResult, undefined> {
-      const { attachments, traceId } = runOptions ?? {};
-      const effectiveTraceId = traceId ?? agentTraceId;
-
-      log("info", "Agent stream started", {
-        input: input.slice(0, 100),
-        traceId: effectiveTraceId,
-      });
-
-      const run = startRun(runOptions);
-      const toolsCalled: ToolCallRecord[] = [];
-      let stepIndex = 0;
-      let stepToolsCalled: ToolCallRecord[] = [];
-
+      const turn = openTurn("stream", input, runOptions);
+      const { run, recorder } = turn;
       // Every yield sits inside this try, so a consumer that stops after any event reaches the finally.
       try {
         yield { type: "start", timestamp: Date.now() };
 
-        const initialState = run.state();
-        if (initialState) {
-          const agentResult = signalResult(initialState, toolsCalled, stepIndex);
-          yield { type: "complete", result: agentResult };
-          return agentResult;
+        const start = await startTurn(turn);
+        if (typeof start === "string") {
+          const result = await endBySignal(turn, start);
+          yield { type: "complete", result };
+          return result;
         }
 
-        await onStart?.(input);
-
-        const { extraUsage, extraCost } = await summarizeIfOverBudget(run.signal);
-
-        const userMessage = buildUserMessage(input, attachments);
-        const messages: Message[] = [...historyManager.get(), userMessage];
-
         const streamResult = await sdkAgent.stream({
-          messages,
+          messages: start.messages,
           abortSignal: run.signal,
-          onStepEnd: async (step) => {
-            stepToolsCalled = buildToolCallRecords(step, toolTimings);
-            toolsCalled.push(...stepToolsCalled);
-            await onStep?.({ stepIndex, toolsCalled: stepToolsCalled, textGenerated: step.text });
-          },
+          options: { traceId: turn.traceId },
+          onToolExecutionEnd: (event) => recorder.onToolExecutionEnd(event),
+          onStepEnd: (step) => recorder.onStepEnd(step),
         });
+        const settled = streamResult.steps.then(
+          (steps) => steps,
+          () => []
+        );
 
         for await (const part of streamResult.fullStream) {
           // An SDK error part or abort part after a signal fired is that signal, not an API error.
           const state = run.state();
           if (part.type === "abort" || (part.type === "error" && state)) {
-            await reportSignal(state ?? "aborted", run.signal.reason, "stream");
-            const agentResult = signalResult(state ?? "aborted", toolsCalled, stepIndex);
-            yield { type: "complete", result: agentResult };
-            return agentResult;
+            const result = await endBySignal(turn, state ?? "aborted");
+            yield { type: "complete", result };
+            return result;
           }
-
-          const evt = toAgentEvent(part, toolTimings, stepIndex, stepToolsCalled);
-          if (evt) yield evt;
 
           if (part.type === "finish-step") {
-            stepIndex++;
-            stepToolsCalled = [];
+            const step = await recorder.takeStep(settled);
+            yield { type: "step-complete", ...step, usage: toTokenUsage(part.usage) };
+            continue;
           }
 
+          const evt = toAgentEvent(part, recorder.toolTimings);
+          if (evt) yield evt;
+
           if (evt?.type === "error") {
-            const agentResult: AgentResult = {
-              message: "",
-              toolsCalled,
-              iterations: stepIndex,
-              stopReason: "error",
-              usage: zeroUsage(),
-            };
-            log("error", "Agent stream failed mid-stream", { error: evt.error.message });
-            await onError?.(evt.error, { phase: "api" });
-            yield { type: "complete", result: agentResult };
-            return agentResult;
+            await reportApiError(evt.error, "Agent stream failed mid-stream");
+            const result = emptyResult(turn, "error");
+            yield { type: "complete", result };
+            return result;
           }
         }
 
         const text = await streamResult.text;
-        const finalUsage = addUsage(toTokenUsage(await streamResult.usage), extraUsage);
-        const finishReason = await streamResult.finishReason;
-        const steps = await streamResult.steps;
-        const responseMessages = await streamResult.responseMessages;
-        const reasoningText = (await streamResult.finalStep).reasoningText;
-
-        const stopReason = toStopReason(finishReason, steps, maxIterations, undefined);
-
         yield { type: "text-complete", content: text };
 
-        historyManager.append(userMessage, responseMessages);
-
-        const agentResult: AgentResult = {
-          message: text,
-          toolsCalled,
-          iterations: steps.length,
-          stopReason,
-          usage: finalUsage,
-          cost: pricing ? addCost(sumCost(steps, pricing), extraCost) : undefined,
-          thinking: reasoningText,
-        };
-
-        log("info", "Agent stream completed", { iterations: agentResult.iterations, stopReason });
-        await onComplete?.(agentResult);
-
-        yield { type: "complete", result: agentResult };
-
-        return agentResult;
+        const result = await finishTurn(turn, start, {
+          text,
+          usage: await streamResult.usage,
+          finishReason: await streamResult.finishReason,
+          steps: await streamResult.steps,
+          responseMessages: await streamResult.responseMessages,
+          reasoningText: (await streamResult.finalStep).reasoningText,
+        });
+        yield { type: "complete", result };
+        return result;
       } catch (error) {
         const state = run.state();
         if (state) {
-          await reportSignal(state, run.signal.reason, "stream");
-          const agentResult = signalResult(state, toolsCalled, stepIndex);
-          yield { type: "complete", result: agentResult };
-          return agentResult;
+          const result = await endBySignal(turn, state);
+          yield { type: "complete", result };
+          return result;
         }
 
         const errorObj = error instanceof Error ? error : new Error(String(error));
-
         yield { type: "error", error: errorObj };
-
-        const agentResult: AgentResult = {
-          message: "",
-          toolsCalled,
-          iterations: stepIndex,
-          stopReason: "error",
-          usage: zeroUsage(),
-        };
-
-        log("error", "Agent stream failed", { error: errorObj.message });
-        await onError?.(errorObj, { phase: "api" });
-
-        yield { type: "complete", result: agentResult };
-
-        return agentResult;
+        await reportApiError(errorObj, "Agent stream failed");
+        const result = emptyResult(turn, "error");
+        yield { type: "complete", result };
+        return result;
       } finally {
         // Reached on break/return from the consumer too: stop the model call so tokens stop streaming.
         run.cancel();

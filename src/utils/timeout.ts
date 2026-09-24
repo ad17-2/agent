@@ -1,4 +1,4 @@
-import type { SignalState } from "../agent/stop-reason.js";
+export type SignalState = "aborted" | "timeout" | undefined;
 
 export interface RunSignal {
   signal: AbortSignal;

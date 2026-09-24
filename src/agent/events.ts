@@ -1,33 +1,10 @@
 import type { TextStreamPart, ToolSet } from "ai";
-import type { AgentEvent, TokenUsage, ToolCallRecord } from "../types.js";
+import type { AgentEvent } from "../types.js";
 
-function toTokenUsage(usage: {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
-  outputTokenDetails?: { reasoningTokens?: number };
-}): TokenUsage {
-  return {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-    totalTokens: usage.totalTokens ?? 0,
-    cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? 0,
-    cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? 0,
-    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
-  };
-}
-
-/**
- * Maps one SDK stream part to an AgentEvent, or undefined for parts the
- * public event stream does not surface (e.g. start-step, tool-input-delta).
- * `toolDurations` supplies durationMs for tool-call-complete, keyed by toolCallId.
- */
+/** Parts that carry step data (`finish-step`) are mapped by the stream loop, not here. */
 export function toAgentEvent(
   part: TextStreamPart<ToolSet>,
-  toolDurations: ReadonlyMap<string, number>,
-  stepIndex: number,
-  stepToolsCalled: ToolCallRecord[]
+  toolDurations: ReadonlyMap<string, number>
 ): AgentEvent | undefined {
   switch (part.type) {
     case "text-delta":
@@ -61,14 +38,6 @@ export function toAgentEvent(
         toolCallId: part.toolCallId,
       };
 
-    case "finish-step":
-      return {
-        type: "step-complete",
-        stepIndex,
-        toolsCalled: stepToolsCalled,
-        usage: toTokenUsage(part.usage),
-      };
-
     case "error":
       return {
         type: "error",
@@ -79,5 +48,3 @@ export function toAgentEvent(
       return undefined;
   }
 }
-
-export { toTokenUsage };

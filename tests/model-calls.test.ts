@@ -5,18 +5,7 @@ import { z } from "zod";
 import { defineTool } from "../src/tool.js";
 import { createAgent } from "../src/agent/index.js";
 import type { Message } from "../src/types.js";
-
-function usage(inputTokens = 10, outputTokens = 5) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 function textResult(text: string, inputTokens = 10) {
   return {

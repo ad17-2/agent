@@ -2,18 +2,7 @@ import { describe, it, expect } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAgent } from "../src/agent/index.js";
-
-function usage(inputTokens = 10, outputTokens = 20) {
-  return {
-    inputTokens: {
-      total: inputTokens,
-      noCache: inputTokens,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: outputTokens, text: outputTokens, reasoning: undefined },
-  };
-}
+import { usage } from "./helpers.js";
 
 describe("providerOptions", () => {
   it("deep-merges caller providerOptions with thinking under the same provider key", async () => {
@@ -29,7 +18,7 @@ describe("providerOptions", () => {
       model,
       systemPrompt: "Test",
       tools: {},
-      thinking: { enabled: true, budgetTokens: 2048 },
+      thinking: { budgetTokens: 2048 },
       providerOptions: {
         anthropic: { cacheControl: { type: "ephemeral" } },
         openai: { reasoningEffort: "low" },
@@ -45,6 +34,22 @@ describe("providerOptions", () => {
       },
       openai: { reasoningEffort: "low" },
     });
+  });
+
+  it("sends no thinking option when thinking is not set", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: "ok" }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage(),
+        warnings: [],
+      }),
+    });
+    const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
+
+    await agent.run("go");
+
+    expect(model.doGenerateCalls[0]!.providerOptions).toBeUndefined();
   });
 
   it("@ai-sdk/anthropic adds the thinking budget to max_tokens, so the 4096/10000 defaults are valid", async () => {
@@ -72,7 +77,7 @@ describe("providerOptions", () => {
       model: provider("claude-sonnet-4-5"),
       systemPrompt: "Test",
       tools: {},
-      thinking: { enabled: true },
+      thinking: {},
     });
 
     await agent.run("go");

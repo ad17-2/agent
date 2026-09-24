@@ -1,9 +1,9 @@
 allowBuilds:
   esbuild: true
 # pnpm 12's default release-age gate stays on for every future bump. Each exclusion is
-# pinned to the exact version the design pins (the 2026-09-23 releases): ai 7.0.113 and its
-# @ai-sdk companions, the MCP SDK (and its hono dependency) the test fixture runs, and
-# tsdown's rolldown bundler with its platform bindings. A newer version of any of these
+# pinned to an exact version (the 2026-09-23 releases): ai 7.0.113 and its @ai-sdk companions,
+# the MCP SDK (and its hono dependency) the test fixture runs, and tsdown's rolldown bundler
+# with its platform bindings. A newer version of any of these
 # is gated like everything else until it is old enough.
 minimumReleaseAgeExclude:
   - ai@7.0.113

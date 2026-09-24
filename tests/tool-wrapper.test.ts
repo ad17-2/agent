@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { defineTool } from "../src/tool.js";
 import { wrapToolsWithCallbacks } from "../src/agent/tool-wrapper.js";
+import { executeOptions } from "./helpers.js";
 
 describe("wrapToolsWithCallbacks", () => {
   it("aborts the handler's signal when the per-tool timeout elapses", async () => {
@@ -12,7 +13,7 @@ describe("wrapToolsWithCallbacks", () => {
       schema: z.object({}),
       handler: (_input, ctx) => {
         return new Promise((_resolve, reject) => {
-          ctx.signal?.addEventListener("abort", () => {
+          ctx.abortSignal?.addEventListener("abort", () => {
             sawAbort = true;
             reject(new Error("cancelled"));
           });
@@ -21,14 +22,9 @@ describe("wrapToolsWithCallbacks", () => {
       timeoutMs: 20,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ cooperative }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ cooperative }, undefined, {});
 
-    await expect(
-      wrapped.cooperative!.execute!(
-        {},
-        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
-      )
-    ).rejects.toThrow();
+    await expect(wrapped.cooperative!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
   });
@@ -40,7 +36,7 @@ describe("wrapToolsWithCallbacks", () => {
       description: "Ignores its signal",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -49,26 +45,21 @@ describe("wrapToolsWithCallbacks", () => {
       timeoutMs: 20,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ uncooperative }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ uncooperative }, undefined, {});
 
-    await expect(
-      wrapped.uncooperative!.execute!(
-        {},
-        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
-      )
-    ).rejects.toThrow();
+    await expect(wrapped.uncooperative!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
   });
 
-  it("falls back to the agent-level toolTimeoutMs when the tool has none of its own", async () => {
+  it("falls back to the agent-level timeout.toolMs when the tool has none of its own", async () => {
     let sawAbort = false;
 
     const slow = defineTool({
       description: "Slow tool",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -76,20 +67,9 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks(
-      { slow },
-      new Map(),
-      undefined,
-      {},
-      { toolTimeoutMs: 20 }
-    );
+    const wrapped = wrapToolsWithCallbacks({ slow }, undefined, {}, { toolMs: 20 });
 
-    await expect(
-      wrapped.slow!.execute!(
-        {},
-        { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
-      )
-    ).rejects.toThrow();
+    await expect(wrapped.slow!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
     expect(sawAbort).toBe(true);
   });
@@ -101,27 +81,23 @@ describe("wrapToolsWithCallbacks", () => {
       description: "Fast tool",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         return "done";
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ fast }, new Map(), undefined, {});
+    const wrapped = wrapToolsWithCallbacks({ fast }, undefined, {});
 
-    await wrapped.fast!.execute!(
-      {},
-      { toolCallId: "t1", abortSignal: undefined, context: undefined, messages: [] }
-    );
+    await wrapped.fast!.execute!({}, executeOptions("t1"));
 
     expect(sawAbort).toBe(false);
   });
 
-  it("records call duration and invokes onToolCall/onToolResult", async () => {
+  it("invokes onToolCall and onToolResult around the handler", async () => {
     const onToolCall = vi.fn();
     const onToolResult = vi.fn();
-    const timings = new Map<string, number>();
 
     const greet = defineTool({
       description: "Greet",
@@ -129,20 +105,13 @@ describe("wrapToolsWithCallbacks", () => {
       handler: async ({ name }) => `Hello, ${name}!`,
     });
 
-    const wrapped = wrapToolsWithCallbacks({ greet }, timings, undefined, {
-      onToolCall,
-      onToolResult,
-    });
+    const wrapped = wrapToolsWithCallbacks({ greet }, undefined, { onToolCall, onToolResult });
 
-    const result = await wrapped.greet!.execute!(
-      { name: "World" },
-      { toolCallId: "call-1", abortSignal: undefined, context: undefined, messages: [] }
-    );
+    const result = await wrapped.greet!.execute!({ name: "World" }, executeOptions("call-1"));
 
     expect(result).toBe("Hello, World!");
     expect(onToolCall).toHaveBeenCalledWith("greet", { name: "World" });
     expect(onToolResult).toHaveBeenCalledWith("greet", "Hello, World!");
-    expect(timings.get("call-1")).toBeGreaterThanOrEqual(0);
   });
 
   it("still reports a tool's own error when the run signal fires at the same moment", async () => {
@@ -157,13 +126,10 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ buggy }, new Map(), undefined, { onError });
+    const wrapped = wrapToolsWithCallbacks({ buggy }, undefined, { onError });
 
     await expect(
-      wrapped.buggy!.execute!(
-        {},
-        { toolCallId: "t1", abortSignal: controller.signal, context: undefined, messages: [] }
-      )
+      wrapped.buggy!.execute!({}, executeOptions("t1", controller.signal))
     ).rejects.toThrow();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "invalid API key" }), {
       phase: "tool",
