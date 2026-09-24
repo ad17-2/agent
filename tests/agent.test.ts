@@ -33,11 +33,11 @@ describe("createAgent", () => {
       tools: {},
     });
 
-    expect(agent.run).toBeInstanceOf(Function);
-    expect(agent.stream).toBeInstanceOf(Function);
-    expect(agent.clearHistory).toBeInstanceOf(Function);
-    expect(agent.exportHistory).toBeInstanceOf(Function);
-    expect(agent.importHistory).toBeInstanceOf(Function);
+    expect(typeof agent.run).toBe("function");
+    expect(typeof agent.stream).toBe("function");
+    expect(typeof agent.clearHistory).toBe("function");
+    expect(typeof agent.exportHistory).toBe("function");
+    expect(typeof agent.importHistory).toBe("function");
   });
 
   it("returns message and usage from a run", async () => {

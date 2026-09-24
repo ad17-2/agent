@@ -16,7 +16,7 @@ export interface ToolOptions<TInput extends z.ZodType> {
   description: string;
   schema: TInput;
   handler: (input: z.infer<TInput>, context: ToolContext) => Promise<unknown>;
-  onError?: (context: ToolErrorContext<z.infer<TInput>>) => unknown | Promise<unknown>;
+  onError?: (context: ToolErrorContext<z.infer<TInput>>) => unknown;
   /** Per-tool timeout; enforced by agent/tool-wrapper.ts, not here. */
   timeoutMs?: number;
 }
