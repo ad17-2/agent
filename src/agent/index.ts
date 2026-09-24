@@ -402,9 +402,10 @@ export function createAgent(options: AgentOptions): Agent {
       let stepIndex = 0;
       let stepToolsCalled: ToolCallRecord[] = [];
 
-      yield { type: "start", timestamp: Date.now() };
-
+      // Every yield sits inside this try, so a consumer that stops after any event reaches the finally.
       try {
+        yield { type: "start", timestamp: Date.now() };
+
         const initialState = run.state();
         if (initialState) {
           const agentResult = signalResult(initialState, toolsCalled, stepIndex);

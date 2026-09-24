@@ -134,8 +134,8 @@ An explicit `undefined` for any field takes that field's default.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `runTimeoutMs` | `number` | Global timeout for the entire run |
-| `toolTimeoutMs` | `number` | Default timeout for tool execution |
+| `runTimeoutMs` | `number` | Global timeout for the entire run; `0` or unset means no timeout |
+| `toolTimeoutMs` | `number` | Default timeout for tool execution; `0` or unset means no timeout |
 
 #### RunOptions
 
@@ -143,7 +143,7 @@ An explicit `undefined` for any field takes that field's default.
 |--------|------|-------------|
 | `attachments` | `Attachment[]` | Array of images, PDFs, or files |
 | `signal` | `AbortSignal` | Abort signal for cancellation |
-| `timeoutMs` | `number` | Override run timeout for this call |
+| `timeoutMs` | `number` | Override run timeout for this call; `0` disables it for this call even when `timeout.runTimeoutMs` is set |
 | `traceId` | `string` | Override trace ID for this call |
 
 #### AgentResult
@@ -238,7 +238,7 @@ for await (const event of agent.stream("Search for TypeScript tutorials")) {
 }
 ```
 
-Breaking out of the `for await` loop cancels the underlying model request (tokens stop streaming and billing) and appends nothing to history: the partial turn is discarded, so the next `run()`/`stream()` continues from the last completed turn. A mid-stream abort or timeout ends the stream with a `complete` event whose `result.stopReason` is `"aborted"` or `"timeout"`; no `error` event is emitted and `onError` is not called with `phase: "api"`.
+Breaking out of the `for await` loop (after any event, including `start`) aborts the run's signal, which cancels the in-flight model request and any tool still running with that signal, clears the run timer, and appends nothing to history: the partial turn is discarded, so the next `run()`/`stream()` continues from the last completed turn. No further event is delivered after a break (no `complete`, no `onError`, no `onComplete`). A mid-stream abort or timeout that the consumer keeps iterating through ends the stream with a `complete` event whose `result.stopReason` is `"aborted"` or `"timeout"`; no `error` event is emitted and `onError` is not called with `phase: "api"`.
 
 #### AgentEvent Types
 
@@ -655,7 +655,7 @@ const result = await agent.run("Do something", {
 });
 ```
 
-A run timeout returns `stopReason: "timeout"` and calls `onError` with `phase: "timeout"`; a caller abort via `RunOptions.signal` returns `stopReason: "aborted"` without an `onError` call. The timer is cleared as soon as the run ends, so a finished run does not keep the process alive.
+A run timeout returns `stopReason: "timeout"` and calls `onError` with `phase: "timeout"`; a caller abort via `RunOptions.signal` returns `stopReason: "aborted"` without an `onError` call. `0` means no timeout. The timer is cleared on every exit path of `run()` and `stream()`, including a stream consumer that stops iterating after any event, so a finished run does not keep the process alive.
 
 ---
 

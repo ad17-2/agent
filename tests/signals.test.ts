@@ -161,6 +161,43 @@ describe("in-flight abort and timeout", () => {
     expect(agent.exportHistory().messages).toEqual([]);
   });
 
+  it("stream(): breaking right after the start event still clears the run timer", async () => {
+    vi.useFakeTimers();
+    const model = tickingStreamModel({ pulls: 0 });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      timeout: { runTimeoutMs: 60_000 },
+    });
+
+    for await (const event of agent.stream("go")) {
+      expect(event.type).toBe("start");
+      break;
+    }
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("run(): timeoutMs 0 means no timeout", async () => {
+    const onError = vi.fn();
+    const model = hangingModel();
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      timeout: { runTimeoutMs: 20 },
+      onError,
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+
+    const result = await agent.run("go", { timeoutMs: 0, signal: controller.signal });
+
+    expect(result.stopReason).toBe("aborted");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("leaves no timer behind after a run that finishes before its timeout", async () => {
     vi.useFakeTimers();
     const model = new MockLanguageModelV4({

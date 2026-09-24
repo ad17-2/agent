@@ -10,20 +10,19 @@ export interface RunSignal {
   dispose(): void;
 }
 
+/** `timeoutMs` 0 or undefined means no timer. */
 export function createRunSignal(
   timeoutMs: number | undefined,
   callerSignal?: AbortSignal
 ): RunSignal {
   const timeout = new AbortController();
   const cancel = new AbortController();
-  const timer =
-    timeoutMs === undefined
-      ? undefined
-      : setTimeout(
-          () =>
-            timeout.abort(new DOMException(`Run timed out after ${timeoutMs}ms`, "TimeoutError")),
-          timeoutMs
-        );
+  const timer = !timeoutMs
+    ? undefined
+    : setTimeout(
+        () => timeout.abort(new DOMException(`Run timed out after ${timeoutMs}ms`, "TimeoutError")),
+        timeoutMs
+      );
 
   const sources = [timeout.signal, cancel.signal];
   if (callerSignal) sources.push(callerSignal);
