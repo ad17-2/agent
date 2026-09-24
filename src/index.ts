@@ -48,3 +48,4 @@ export type {
 } from "./types.js";
 
 export { z } from "zod";
+export type { TelemetryOptions } from "ai";

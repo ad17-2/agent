@@ -1,4 +1,4 @@
-import type { LanguageModel, ModelMessage, Tool, ToolSet } from "ai";
+import type { LanguageModel, ModelMessage, TelemetryOptions, Tool, ToolSet } from "ai";
 
 /** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`. */
 export type ProviderOptions = Record<string, Record<string, unknown>>;
@@ -193,6 +193,7 @@ export interface AgentOptions extends AgentHooks {
   timeout?: TimeoutConfig;
   pricing?: PriceTable;
   context?: ContextConfig;
+  telemetry?: TelemetryOptions;
   logger?: Logger;
   traceId?: string;
 }

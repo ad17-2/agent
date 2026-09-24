@@ -128,6 +128,7 @@ export function createAgent(options: AgentOptions): Agent {
     timeout: timeoutConfig,
     pricing,
     context: contextConfig,
+    telemetry: telemetryConfig,
     logger,
     traceId: agentTraceId,
     onStart,
@@ -183,6 +184,11 @@ export function createAgent(options: AgentOptions): Agent {
       ? { ...thinkingProviderOptions, ...extraProviderOptions }
       : undefined;
 
+  // functionId groups telemetry data by function in the exporter's UI; default it to traceId when unset.
+  const telemetry = telemetryConfig
+    ? { ...telemetryConfig, functionId: telemetryConfig.functionId ?? agentTraceId }
+    : undefined;
+
   const sdkAgent = new ToolLoopAgent({
     model,
     instructions: systemPrompt,
@@ -192,6 +198,7 @@ export function createAgent(options: AgentOptions): Agent {
     maxRetries: 0,
     providerOptions,
     prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+    telemetry,
   });
 
   /** Summarizes history when it is over budget, folding the summary's own usage/cost into `extraUsage`/`extraCost`. */
