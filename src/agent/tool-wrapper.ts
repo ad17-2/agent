@@ -21,7 +21,7 @@ export function wrapToolsWithCallbacks(
       continue;
     }
 
-    const toolTimeoutMs = tool.timeoutMs ?? timeoutConfig?.toolTimeoutMs;
+    const toolTimeoutMs = tool.timeoutMs ?? timeoutConfig?.toolMs;
 
     wrapped[name] = {
       ...tool,

@@ -55,7 +55,7 @@ console.log(result.usage); // { inputTokens, outputTokens, totalTokens, cacheRea
 - **`RunOptions.image` (already deprecated in 0.4.x) is removed.** Use `attachments`.
 - **`AgentResult.stopReason` values are now accurate.** `max_tokens` (the output-token cap) and `max_iterations` (the step cap) were previously conflated; `content_filter`, `aborted`, `timeout`, and `other` are now real, reachable values instead of being thrown as `AgentError("ABORTED")`. See [StopReason](#agentresult) below.
 - **`TokenUsage` gained fields.** `cacheReadTokens`, `cacheWriteTokens`, and `reasoningTokens` are now populated (previously always `0` or absent).
-- **Tool call timeouts now abort the tool's `signal`**, not just race it — see [Timeout Configuration](#timeout-configuration).
+- **Tool call timeouts now abort the tool's `abortSignal`**, not just race it — see [Timeout Configuration](#timeout-configuration).
 - **`retry.retryOn` no longer defaults to retrying everything.** The default follows the provider's own classification (429, 5xx, overloaded, failed connections); a 400 or 401 is attempted once. Pass your own `retryOn` to keep the old behaviour — see [RetryConfig](#retryconfig).
 
 ## API Reference
@@ -85,7 +85,7 @@ const result = await agent.run("Hello!");
 | `systemPrompt` | `string` | Yes | - | System prompt for the agent |
 | `tools` | `Record<string, Tool>` | Yes | - | Map of tool names to tool definitions |
 | `maxIterations` | `number` | No | `10` | Maximum tool-calling iterations per run |
-| `maxTokens` | `number` | No | `4096` | Maximum output tokens per response |
+| `maxOutputTokens` | `number` | No | `4096` | Maximum output tokens per response |
 | `conversation` | `ConversationConfig` | No | - | Conversation history settings |
 | `thinking` | `ThinkingConfig` | No | - | Extended thinking configuration |
 | `providerOptions` | `ProviderOptions` | No | - | Provider-specific call options, merged per provider key over `thinking` (so `anthropic.thinking` survives extra `anthropic` options) |
@@ -135,16 +135,16 @@ An explicit `undefined` for any field takes that field's default.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `runTimeoutMs` | `number` | Global timeout for the entire run; `0` or unset means no timeout |
-| `toolTimeoutMs` | `number` | Default timeout for tool execution; `0` or unset means no timeout |
+| `totalMs` | `number` | Global timeout for the entire run; `0` or unset means no timeout |
+| `toolMs` | `number` | Default timeout for tool execution; `0` or unset means no timeout |
 
 #### RunOptions
 
 | Option | Type | Description |
 |--------|------|-------------|
 | `attachments` | `Attachment[]` | Array of images, PDFs, or files |
-| `signal` | `AbortSignal` | Abort signal for cancellation |
-| `timeoutMs` | `number` | Override run timeout for this call; `0` disables it for this call even when `timeout.runTimeoutMs` is set |
+| `abortSignal` | `AbortSignal` | Abort signal for cancellation |
+| `timeoutMs` | `number` | Override `timeout.totalMs` for this call; `0` disables it for this call even when `timeout.totalMs` is set |
 | `traceId` | `string` | Override trace ID for this call |
 
 #### AgentResult
@@ -159,7 +159,7 @@ An explicit `undefined` for any field takes that field's default.
 | `cost` | `Cost` \| `undefined` | Present only when `pricing` is set ([details](#cost-tracking)) |
 | `thinking` | `string` | Extended thinking output (if enabled) |
 
-`aborted` and `timeout` are returned as a result (with empty `message` and zero `usage`), never thrown. Which one you get depends on which signal fired: the run timeout (`timeout.runTimeoutMs` / `RunOptions.timeoutMs`) yields `timeout` and calls `onError` with `phase: "timeout"`; the caller's `RunOptions.signal` yields `aborted` and calls no `onError`. Error message text is never used to tell them apart, so an API error that happens to say "timed out" is still thrown as `AgentError("API_ERROR")`. A run ended by either signal appends nothing to history.
+`aborted` and `timeout` are returned as a result (with empty `message` and zero `usage`), never thrown. Which one you get depends on which signal fired: the run timeout (`timeout.totalMs` / `RunOptions.timeoutMs`) yields `timeout` and calls `onError` with `phase: "timeout"`; the caller's `RunOptions.abortSignal` yields `aborted` and calls no `onError`. Error message text is never used to tell them apart, so an API error that happens to say "timed out" is still thrown as `AgentError("API_ERROR")`. A run ended by either signal appends nothing to history.
 
 #### TokenUsage
 
@@ -505,11 +505,11 @@ const agent = createAgent({
 
 | Phase | Description |
 |-------|-------------|
-| `tool` | Error occurred during tool execution, including a per-tool `timeoutMs` / `toolTimeoutMs` expiry |
+| `tool` | Error occurred during tool execution, including a per-tool `timeoutMs` / `timeout.toolMs` expiry |
 | `api` | Error occurred during API call |
 | `timeout` | The run timeout fired (the result has `stopReason: "timeout"`) |
 
-A tool cut off by the run's own signal (the run timeout or the caller's `RunOptions.signal`) is not also reported with `phase: "tool"`: a run timeout calls `onError` once, with `phase: "timeout"`, and a caller abort calls it not at all. A tool that fails with its own error at that moment (anything other than the abort reason or an `AbortError`) is still reported with `phase: "tool"`.
+A tool cut off by the run's own signal (the run timeout or the caller's `RunOptions.abortSignal`) is not also reported with `phase: "tool"`: a run timeout calls `onError` once, with `phase: "timeout"`, and a caller abort calls it not at all. A tool that fails with its own error at that moment (anything other than the abort reason or an `AbortError`) is still reported with `phase: "tool"`.
 
 ---
 
@@ -544,7 +544,7 @@ const calculator = defineTool({
 #### ToolContext
 
 The `context` parameter provides:
-- `signal?: AbortSignal` - Abort signal for cancellation. On timeout, this signal is aborted (not just raced) so a cooperative handler can stop immediately.
+- `abortSignal?: AbortSignal` - Abort signal for cancellation. On timeout, this signal is aborted (not just raced) so a cooperative handler can stop immediately.
 - `toolCallId?: string` - Unique identifier for this tool call
 
 #### Tool Error Recovery
@@ -603,7 +603,7 @@ console.log(result.usage);
 | `prompt` | `string` | Yes | Text prompt for extraction |
 | `image` | `{ base64, mimeType }` | No | Optional image input |
 | `maxTokens` | `number` | No | Maximum output tokens |
-| `signal` | `AbortSignal` | No | Abort signal for cancellation |
+| `abortSignal` | `AbortSignal` | No | Abort signal for cancellation |
 
 #### StructuredResult
 
@@ -652,7 +652,7 @@ const agent = createAgent({
     }),
   },
   timeout: {
-    runTimeoutMs: 120000, // Global timeout for entire run
+    totalMs: 120000, // Global timeout for entire run
   },
 });
 
@@ -662,7 +662,7 @@ const result = await agent.run("Do something", {
 });
 ```
 
-A run timeout returns `stopReason: "timeout"` and calls `onError` with `phase: "timeout"`; a caller abort via `RunOptions.signal` returns `stopReason: "aborted"` without an `onError` call. `0` means no timeout. The timer is cleared on every exit path of `run()` and `stream()`, including a stream consumer that stops iterating after any event, so a finished run does not keep the process alive.
+A run timeout returns `stopReason: "timeout"` and calls `onError` with `phase: "timeout"`; a caller abort via `RunOptions.abortSignal` returns `stopReason: "aborted"` without an `onError` call. `0` means no timeout. The timer is cleared on every exit path of `run()` and `stream()`, including a stream consumer that stops iterating after any event, so a finished run does not keep the process alive.
 
 ---
 

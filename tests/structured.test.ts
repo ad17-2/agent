@@ -102,7 +102,7 @@ describe("generateStructured", () => {
       },
     });
 
-    await generateStructured({ model, schema, prompt: "Check", signal: controller.signal });
+    await generateStructured({ model, schema, prompt: "Check", abortSignal: controller.signal });
   });
 
   it("maps maxTokens to the SDK's maxOutputTokens call param", async () => {

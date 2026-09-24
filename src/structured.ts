@@ -10,7 +10,7 @@ export interface GenerateStructuredOptions<T extends z.ZodType> {
     mimeType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
   };
   maxTokens?: number;
-  signal?: AbortSignal;
+  abortSignal?: AbortSignal;
 }
 
 export interface StructuredResult<T> {
@@ -24,7 +24,7 @@ export interface StructuredResult<T> {
 export async function generateStructured<T extends z.ZodType>(
   options: GenerateStructuredOptions<T>
 ): Promise<StructuredResult<z.infer<T>>> {
-  const { model, schema, prompt, image, maxTokens, signal } = options;
+  const { model, schema, prompt, image, maxTokens, abortSignal } = options;
 
   const messages: ModelMessage[] = image
     ? [
@@ -43,7 +43,7 @@ export async function generateStructured<T extends z.ZodType>(
     messages,
     output: Output.object<z.infer<T>>({ schema }),
     maxOutputTokens: maxTokens,
-    abortSignal: signal,
+    abortSignal,
   });
 
   return {

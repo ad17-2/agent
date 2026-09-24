@@ -43,7 +43,7 @@ import { toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_MAX_MESSAGES = 20;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const DEFAULT_TTL_MS = TEN_MINUTES_MS;
@@ -85,7 +85,7 @@ export function createAgent(options: AgentOptions): Agent {
     systemPrompt,
     tools,
     maxIterations = DEFAULT_MAX_ITERATIONS,
-    maxTokens = DEFAULT_MAX_TOKENS,
+    maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     conversation,
     thinking,
     providerOptions: extraProviderOptions,
@@ -147,7 +147,7 @@ export function createAgent(options: AgentOptions): Agent {
       timeoutConfig
     ),
     stopWhen: isStepCount(maxIterations),
-    maxOutputTokens: maxTokens,
+    maxOutputTokens,
     maxRetries: 0,
     providerOptions: buildProviderOptions(thinking, extraProviderOptions),
     telemetry: telemetryConfig
@@ -190,7 +190,7 @@ export function createAgent(options: AgentOptions): Agent {
 
   /** Logs the start and arms the run signal; the timer runs from here. */
   function openTurn(kind: Turn["kind"], input: string, runOptions: RunOptions | undefined): Turn {
-    const { attachments, traceId, timeoutMs, signal } = runOptions ?? {};
+    const { attachments, traceId, timeoutMs, abortSignal } = runOptions ?? {};
     log("info", `Agent ${kind} started`, {
       input: input.slice(0, 100),
       traceId: traceId ?? agentTraceId,
@@ -199,7 +199,7 @@ export function createAgent(options: AgentOptions): Agent {
       kind,
       input,
       attachments,
-      run: createRunSignal(timeoutMs ?? timeoutConfig?.runTimeoutMs, signal),
+      run: createRunSignal(timeoutMs ?? timeoutConfig?.totalMs, abortSignal),
       recorder: new StepRecorder(onStep),
     };
   }

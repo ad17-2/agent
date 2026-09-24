@@ -30,8 +30,8 @@ export interface RetryConfig {
 }
 
 export interface TimeoutConfig {
-  runTimeoutMs?: number;
-  toolTimeoutMs?: number;
+  totalMs?: number;
+  toolMs?: number;
 }
 
 export interface ThinkingConfig {
@@ -147,8 +147,8 @@ export interface ToolCallRecord {
   input: unknown;
   output: unknown;
   durationMs: number;
-  error?: boolean;
-  errorMessage?: string;
+  /** The failure message; present only when the call failed. */
+  error?: string;
 }
 
 export type AgentEvent =
@@ -194,7 +194,7 @@ export interface AgentOptions extends AgentHooks {
   systemPrompt: string;
   tools: ToolSet;
   maxIterations?: number;
-  maxTokens?: number;
+  maxOutputTokens?: number;
   conversation?: ConversationConfig;
   thinking?: ThinkingConfig;
   providerOptions?: ProviderOptions;
@@ -209,7 +209,8 @@ export interface AgentOptions extends AgentHooks {
 
 export interface RunOptions {
   attachments?: Attachment[];
-  signal?: AbortSignal;
+  abortSignal?: AbortSignal;
+  /** Overrides `timeout.totalMs` for this call; `0` disables it. */
   timeoutMs?: number;
   traceId?: string;
 }

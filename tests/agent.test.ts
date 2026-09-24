@@ -206,7 +206,7 @@ describe("createAgent", () => {
     }));
 
     const agent = createAgent({ model, systemPrompt: "Test", tools: {} });
-    const result = await agent.run("Test", { signal: controller.signal });
+    const result = await agent.run("Test", { abortSignal: controller.signal });
 
     expect(result.stopReason).toBe("aborted");
   });
@@ -598,7 +598,7 @@ describe("agent.stream events", () => {
       stepIndex: 0,
       toolsCalled: [
         { name: "echo", output: "echoed", error: undefined },
-        { name: "boom", output: undefined, error: true, errorMessage: "boom" },
+        { name: "boom", output: undefined, error: "boom" },
       ],
     });
     expect(events.filter((e) => e.type === "step-complete")[1]).toMatchObject({
@@ -693,7 +693,7 @@ describe("agent.stream events", () => {
 });
 
 describe("agent.run tool records", () => {
-  it("marks a failed tool call with error and errorMessage", async () => {
+  it("marks a failed tool call with its error message", async () => {
     const boom = defineTool({
       description: "Throws",
       schema: z.object({}),
@@ -713,8 +713,7 @@ describe("agent.run tool records", () => {
         input: {},
         output: undefined,
         durationMs: expect.any(Number),
-        error: true,
-        errorMessage: "boom",
+        error: "boom",
       },
     ]);
   });

@@ -68,7 +68,7 @@ describe("in-flight abort and timeout", () => {
     setTimeout(() => controller.abort(), 10);
 
     const started = Date.now();
-    const result = await agent.run("go", { signal: controller.signal });
+    const result = await agent.run("go", { abortSignal: controller.signal });
 
     expect(result.stopReason).toBe("aborted");
     expect(Date.now() - started).toBeLessThan(500);
@@ -106,7 +106,7 @@ describe("in-flight abort and timeout", () => {
     const controller = new AbortController();
 
     const events: AgentEvent[] = [];
-    for await (const event of agent.stream("go", { signal: controller.signal })) {
+    for await (const event of agent.stream("go", { abortSignal: controller.signal })) {
       events.push(event);
       if (events.filter((e) => e.type === "text-delta").length === 2) controller.abort();
     }
@@ -153,7 +153,7 @@ describe("in-flight abort and timeout", () => {
       model,
       systemPrompt: "Test",
       tools: {},
-      timeout: { runTimeoutMs: 60_000 },
+      timeout: { totalMs: 60_000 },
     });
 
     for await (const event of agent.stream("go")) {
@@ -171,13 +171,13 @@ describe("in-flight abort and timeout", () => {
       model,
       systemPrompt: "Test",
       tools: {},
-      timeout: { runTimeoutMs: 20 },
+      timeout: { totalMs: 20 },
       onError,
     });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 50);
 
-    const result = await agent.run("go", { timeoutMs: 0, signal: controller.signal });
+    const result = await agent.run("go", { timeoutMs: 0, abortSignal: controller.signal });
 
     expect(result.stopReason).toBe("aborted");
     expect(onError).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe("in-flight abort and timeout", () => {
       model,
       systemPrompt: "Test",
       tools: {},
-      timeout: { runTimeoutMs: 60_000 },
+      timeout: { totalMs: 60_000 },
     });
 
     const result = await agent.run("go");

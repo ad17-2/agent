@@ -20,8 +20,7 @@ function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
       input: call.input,
       output: result?.output,
       durationMs: step.performance.toolExecutionMs[call.toolCallId] ?? 0,
-      error: errorPart ? true : undefined,
-      errorMessage: errorPart
+      error: errorPart
         ? errorPart.error instanceof Error
           ? errorPart.error.message
           : String(errorPart.error)

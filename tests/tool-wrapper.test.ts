@@ -13,7 +13,7 @@ describe("wrapToolsWithCallbacks", () => {
       schema: z.object({}),
       handler: (_input, ctx) => {
         return new Promise((_resolve, reject) => {
-          ctx.signal?.addEventListener("abort", () => {
+          ctx.abortSignal?.addEventListener("abort", () => {
             sawAbort = true;
             reject(new Error("cancelled"));
           });
@@ -36,7 +36,7 @@ describe("wrapToolsWithCallbacks", () => {
       description: "Ignores its signal",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -52,14 +52,14 @@ describe("wrapToolsWithCallbacks", () => {
     expect(sawAbort).toBe(true);
   });
 
-  it("falls back to the agent-level toolTimeoutMs when the tool has none of its own", async () => {
+  it("falls back to the agent-level timeout.toolMs when the tool has none of its own", async () => {
     let sawAbort = false;
 
     const slow = defineTool({
       description: "Slow tool",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -67,7 +67,7 @@ describe("wrapToolsWithCallbacks", () => {
       },
     });
 
-    const wrapped = wrapToolsWithCallbacks({ slow }, undefined, {}, { toolTimeoutMs: 20 });
+    const wrapped = wrapToolsWithCallbacks({ slow }, undefined, {}, { toolMs: 20 });
 
     await expect(wrapped.slow!.execute!({}, executeOptions("t1"))).rejects.toThrow();
 
@@ -81,7 +81,7 @@ describe("wrapToolsWithCallbacks", () => {
       description: "Fast tool",
       schema: z.object({}),
       handler: async (_input, ctx) => {
-        ctx.signal?.addEventListener("abort", () => {
+        ctx.abortSignal?.addEventListener("abort", () => {
           sawAbort = true;
         });
         return "done";

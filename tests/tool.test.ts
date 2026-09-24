@@ -41,7 +41,7 @@ describe("defineTool", () => {
       description: "Check signal",
       schema: z.object({}),
       handler: async (_, ctx) => {
-        receivedSignal = ctx.signal;
+        receivedSignal = ctx.abortSignal;
         return "done";
       },
     });
