@@ -1,12 +1,10 @@
 import type { TextStreamPart, ToolSet } from "ai";
-import type { AgentEvent, ToolCallRecord } from "../types.js";
-import { toTokenUsage } from "../usage.js";
+import type { AgentEvent } from "../types.js";
 
+/** Parts that carry step data (`finish-step`) are mapped by the stream loop, not here. */
 export function toAgentEvent(
   part: TextStreamPart<ToolSet>,
-  toolDurations: ReadonlyMap<string, number>,
-  stepIndex: number,
-  stepToolsCalled: ToolCallRecord[]
+  toolDurations: ReadonlyMap<string, number>
 ): AgentEvent | undefined {
   switch (part.type) {
     case "text-delta":
@@ -38,14 +36,6 @@ export function toAgentEvent(
         name: part.toolName,
         error: part.error instanceof Error ? part.error.message : String(part.error),
         toolCallId: part.toolCallId,
-      };
-
-    case "finish-step":
-      return {
-        type: "step-complete",
-        stepIndex,
-        toolsCalled: stepToolsCalled,
-        usage: toTokenUsage(part.usage),
       };
 
     case "error":
