@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { APICallError, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
@@ -301,5 +302,100 @@ describe("retry config defaults", () => {
 
     expect(result.message).toBe("ok");
     expect(model.doGenerateCalls).toHaveLength(2);
+  });
+});
+
+describe("stream retry boundary", () => {
+  it("cancels a failed attempt's stream before retrying", async () => {
+    let call = 0;
+    let cancels = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        call++;
+        if (call > 1) return { stream: simulateReadableStream({ chunks: textChunks }) };
+        return {
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: "stream-start", warnings: [] });
+              controller.enqueue({ type: "error", error: apiError(529) });
+            },
+            cancel() {
+              cancels++;
+            },
+          }),
+        };
+      },
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: {},
+      retry: { maxAttempts: 2, initialDelayMs: 1 },
+    });
+
+    const events = await collect(agent.stream("go"));
+
+    expect(events.find((e) => e.type === "complete")).toMatchObject({
+      result: { message: "Hello", stopReason: "end_turn" },
+    });
+    expect(model.doStreamCalls).toHaveLength(2);
+    expect(cancels).toBe(1);
+  });
+
+  it("anthropic: an overloaded_error after message_start (before any content) is retried", async () => {
+    const sse = (events: Array<{ type: string } & Record<string, unknown>>) =>
+      events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+    const messageStart = {
+      type: "message_start",
+      message: {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    };
+    const bodies = [
+      sse([
+        messageStart,
+        { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+      ]),
+      sse([
+        messageStart,
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { output_tokens: 5 },
+        },
+        { type: "message_stop" },
+      ]),
+    ];
+    let fetches = 0;
+    const fetch: typeof globalThis.fetch = async () =>
+      new Response(bodies[fetches++], {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    const anthropic = createAnthropic({ apiKey: "test-key", fetch });
+    const agent = createAgent({
+      model: anthropic("claude-sonnet-5"),
+      systemPrompt: "Test",
+      tools: {},
+      retry: { maxAttempts: 2, initialDelayMs: 1 },
+    });
+
+    const events = await collect(agent.stream("go"));
+
+    expect(events.map((e) => e.type)).not.toContain("error");
+    expect(events.filter((e) => e.type === "text-delta")).toHaveLength(1);
+    expect(events.find((e) => e.type === "complete")).toMatchObject({
+      result: { message: "Hello", stopReason: "end_turn" },
+    });
+    expect(fetches).toBe(2);
   });
 });

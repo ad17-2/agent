@@ -67,24 +67,33 @@ async function backoffOrThrow(
   await sleep(delayMs, signal);
 }
 
+/** Parts a provider emits before any output; Anthropic sends `response-metadata` on message_start, before its first content block. */
+const METADATA_PARTS = new Set<StreamPart["type"]>(["stream-start", "response-metadata", "raw"]);
+
 /**
- * Reads past `stream-start` so a failure before any content (a rejected read or an `error` part)
- * surfaces as a throw the caller can retry. On success the consumed parts are put back in front.
+ * Reads until the first content-bearing part, so a failure before any output (a rejected read or
+ * an `error` part) surfaces as a throw the caller can retry, with the failed attempt cancelled and
+ * its metadata parts dropped. On success the consumed parts are put back in front.
  */
 async function openStream(result: StreamResult): Promise<StreamResult> {
   const reader = result.stream.getReader();
   const buffered: StreamPart[] = [];
   let done = false;
 
-  while (!done) {
-    const next = await reader.read();
-    if (next.done) {
-      done = true;
-      break;
+  try {
+    while (!done) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        break;
+      }
+      if (next.value.type === "error") throw next.value.error;
+      buffered.push(next.value);
+      if (!METADATA_PARTS.has(next.value.type)) break;
     }
-    if (next.value.type === "error") throw next.value.error;
-    buffered.push(next.value);
-    if (next.value.type !== "stream-start") break;
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    throw error;
   }
 
   return {
@@ -105,8 +114,8 @@ async function openStream(result: StreamResult): Promise<StreamResult> {
 }
 
 /**
- * Retries a single model call. `doGenerate` is retried whole; `doStream` only while nothing past
- * `stream-start` has been delivered, since replaying would duplicate output the consumer already saw.
+ * Retries a single model call. `doGenerate` is retried whole; `doStream` only while no content part
+ * has been delivered, since replaying would duplicate output the consumer already saw.
  */
 export function retryMiddleware(options: RetryOptions): LanguageModelMiddleware {
   return {
