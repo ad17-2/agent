@@ -4,16 +4,13 @@ A tool-calling agent for TypeScript, built on the Vercel AI SDK 7 `ToolLoopAgent
 
 ## Install
 
-```bash
-# .npmrc
-@ad17-2:registry=https://npm.pkg.github.com
-```
+I use this in my own projects, so it is published to GitHub Packages for those. For everyone else, fork or clone the repo, or install it straight from GitHub:
 
 ```bash
-pnpm add @ad17-2/agent @ai-sdk/anthropic
+pnpm add github:ad17-2/agent @ai-sdk/anthropic
 ```
 
-Requires Node.js 22 or later. The package is ESM only. Any AI SDK provider works; the snippets use Anthropic.
+pnpm blocks a git dependency's build until you allow it, so add the `allowBuilds` line it prints to your `pnpm-workspace.yaml` and run the command again. Requires Node.js 22 or later. The package is ESM only. Any AI SDK provider works; the snippets use Anthropic.
 
 ## Quick start
 
