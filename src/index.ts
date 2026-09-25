@@ -1,7 +1,10 @@
 export { createAgent } from "./agent/index.js";
 export {
   defineTool,
+  defineDynamicTool,
   type DefinedTool,
+  type DynamicToolOptions,
+  type ToolResultOutput,
   type Tool,
   type ToolOptions,
   type ToolContext,
@@ -56,5 +59,17 @@ export type {
 } from "./types.js";
 
 export { z } from "zod";
-export type { TelemetryOptions } from "ai";
-export { createUIMessageStreamResponse, type UIMessage, type UIMessageChunk } from "ai";
+export {
+  isStepCount,
+  hasToolCall,
+  isLoopFinished,
+  pruneMessages,
+  createUIMessageStreamResponse,
+} from "ai";
+export type {
+  TelemetryOptions,
+  StopCondition,
+  PrepareStepFunction,
+  UIMessage,
+  UIMessageChunk,
+} from "ai";

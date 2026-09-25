@@ -4,10 +4,13 @@ import {
   wrapLanguageModel,
   type FinishReason,
   type LanguageModel,
+  type PrepareStepFunction,
   type StepResult,
   type ToolSet,
+  type UIMessage,
+  type UIMessageChunk,
+  createAgentUIStream,
 } from "ai";
-import { createAgentUIStream, type UIMessage, type UIMessageChunk } from "ai";
 import { AgentError } from "../errors.js";
 import { buildUserMessage } from "../message.js";
 import type {
@@ -81,12 +84,28 @@ interface TurnEnd {
   reasoningText: string | undefined;
 }
 
+function composePrepareStep(
+  trim: PrepareStepFunction<ToolSet> | undefined,
+  user: PrepareStepFunction<ToolSet> | undefined
+): PrepareStepFunction<ToolSet> | undefined {
+  if (!trim || !user) return trim ?? user;
+  return async (stepOptions) => {
+    const trimmed = await trim(stepOptions);
+    const own = await user(
+      trimmed?.messages ? { ...stepOptions, messages: trimmed.messages } : stepOptions
+    );
+    return { ...trimmed, ...own };
+  };
+}
+
 export function createAgent(options: AgentOptions): Agent {
   const {
     model: modelOption,
     systemPrompt,
     tools,
     maxIterations = DEFAULT_MAX_ITERATIONS,
+    stopWhen = [],
+    prepareStep,
     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     conversation,
     thinking,
@@ -148,7 +167,7 @@ export function createAgent(options: AgentOptions): Agent {
       { onToolCall, onToolResult, onError },
       timeoutConfig
     ),
-    stopWhen: isStepCount(maxIterations),
+    stopWhen: [isStepCount(maxIterations), ...(Array.isArray(stopWhen) ? stopWhen : [stopWhen])],
     maxOutputTokens,
     maxRetries: 0,
     providerOptions: buildProviderOptions(thinking, extraProviderOptions),
@@ -157,7 +176,10 @@ export function createAgent(options: AgentOptions): Agent {
     prepareCall: ({ options, ...call }) => ({
       ...call,
       model: callModel(modelOption),
-      prepareStep: contextConfig ? trimForStep(contextConfig) : undefined,
+      prepareStep: composePrepareStep(
+        contextConfig ? trimForStep(contextConfig) : undefined,
+        prepareStep
+      ),
       telemetry: telemetryConfig
         ? {
             ...telemetryConfig,

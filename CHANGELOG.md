@@ -12,6 +12,7 @@
 - Error code `TOOL_VALIDATION` is `INVALID_HISTORY`. `TOOL_NOT_FOUND`, `TOOL_EXECUTION`, `MAX_ITERATIONS` and `ABORTED` are removed; nothing threw them.
 - `generateStructured`: `maxTokens` is `maxOutputTokens`, `image` is replaced by `attachments` (the `RunOptions` shape), and `usage` is a full `TokenUsage`.
 - `ErrorContext` is a union: `toolName` exists only when `phase` is `"tool"`.
+- A run that a stop condition ends while the model still wants tools has `stopReason: "stop_condition"`. It was `"other"`.
 
 ### Fixed
 
@@ -26,6 +27,12 @@
 - `DefinedTool`, `ProviderOptions`, `ImageMimeType` and `AttachmentMimeType` are exported.
 - `package.json` declares `sideEffects: false`.
 - Runnable examples for every feature under `examples/`, run by `pnpm examples` and in CI.
+- `AgentOptions.stopWhen` adds SDK stop conditions to the `maxIterations` cap. `isStepCount`, `hasToolCall`, `isLoopFinished` and the `StopCondition` type are re-exported.
+- `AgentOptions.prepareStep` runs the SDK's `PrepareStepFunction` before each step, after context trimming. The `PrepareStepFunction` type is re-exported.
+- `ContextConfig.prune` sets the `pruneMessages` options for in-run trimming. `pruneMessages` is re-exported.
+- `defineTool` takes `toModelOutput`, `onInputStart`, `onInputDelta` and `onInputAvailable`. The `ToolResultOutput` type is exported.
+- `defineDynamicTool` defines a tool whose input is not known until run time.
+- `stream()` yields `tool-input-start` and `tool-input-delta` events.
 - `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`.
 - `agent.uiStream(uiMessages)` returns the SDK's UI message stream for a chat UI. It does not touch history. `createUIMessageStreamResponse`, `UIMessage` and `UIMessageChunk` are re-exported.
 

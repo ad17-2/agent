@@ -68,8 +68,8 @@ export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
     const trimmed = [
       ...pruneMessages({
         messages: messages.slice(0, historyCount),
-        reasoning: "all",
-        toolCalls: "all",
+        reasoning: cfg.prune?.reasoning ?? "all",
+        toolCalls: cfg.prune?.toolCalls ?? "all",
       }),
       ...messages.slice(historyCount),
     ];

@@ -54,6 +54,8 @@ node examples/streaming.ts          # one example, after pnpm build
 |---------|-------|
 | [`basic-tools.ts`](examples/basic-tools.ts) | `defineTool`, `run()`, the result's usage and stop reason |
 | [`streaming.ts`](examples/streaming.ts) | every `AgentEvent`, a failing tool, a stream that fails mid-output |
+| [`loop-control.ts`](examples/loop-control.ts) | `stopWhen: hasToolCall(...)`, `prepareStep` narrowing the tools per step |
+| [`tool-features.ts`](examples/tool-features.ts) | `toModelOutput`, the input streaming hooks and events, `defineDynamicTool` |
 | [`attachments-and-history.ts`](examples/attachments-and-history.ts) | an image turn, export and import, what the next model call receives |
 | [`cost-and-context.ts`](examples/cost-and-context.ts) | a price table, `result.cost`, summarisation between turns |
 | [`retry-and-timeouts.ts`](examples/retry-and-timeouts.ts) | a retried 529, a per-tool timeout, a run timeout |
@@ -87,6 +89,7 @@ A run stops after `maxIterations` model calls (default 10). `stopReason` maps th
 |--------------|------|
 | `end_turn` | The model finished its answer |
 | `max_iterations` | The run hit `maxIterations` while the model still wanted tools |
+| `stop_condition` | A `stopWhen` condition ended the run while the model still wanted tools |
 | `max_tokens` | The response hit `maxOutputTokens` (default 4096) |
 | `content_filter` | The provider filtered the output |
 | `aborted` | The caller's `abortSignal` fired |
@@ -99,6 +102,49 @@ A run stops after `maxIterations` model calls (default 10). `stopReason` maps th
 `model` also accepts a model id string. It resolves on every call through `globalThis.AI_SDK_DEFAULT_PROVIDER`, else the AI SDK gateway, so a provider registered after `createAgent` is used.
 
 One agent can serve overlapping `run()` and `stream()` calls. Each call has its own model resolution, retry state and trimming calibration. History is shared: a call reads it when it starts and appends its turn when it ends, so overlapping calls do not see each other. Run turns in sequence when one must build on the last.
+
+## Loop control
+
+```typescript
+const agent = createAgent({
+  model,
+  systemPrompt: "Research, then submit an answer.",
+  tools: { search, submitAnswer },
+  stopWhen: hasToolCall("submitAnswer"),
+  prepareStep: ({ stepNumber }) =>
+    stepNumber === 0
+      ? { activeTools: ["search"] }
+      : { activeTools: ["submitAnswer"], toolChoice: "required" },
+});
+// result.stopReason: "stop_condition", result.iterations: 2
+```
+
+`stopWhen` takes one SDK `StopCondition` or an array. `isStepCount`, `hasToolCall` and `isLoopFinished` are re-exported. The conditions are added to the `maxIterations` cap, never replace it, so a condition that never fires still stops at `maxIterations`.
+
+`prepareStep` is the SDK's `PrepareStepFunction`. It runs before each model call and can set `activeTools`, `toolChoice`, `model`, `instructions`, `messages` or call settings for that step. With `context` set, it runs after trimming: it receives the trimmed `messages`, its fields win, and the trimmed messages are sent unless it returns its own.
+
+## Tool features
+
+```typescript
+const searchOrders = defineTool({
+  description: "Search orders by customer",
+  schema: z.object({ customer: z.string() }),
+  handler: async ({ customer }) => findOrders(customer),
+  toModelOutput: (output, { input }) => ({ type: "text", value: `2 orders for ${input.customer}` }),
+  onInputDelta: (delta, { toolCallId }) => console.log(toolCallId, delta),
+});
+
+const plugin = defineDynamicTool({
+  description: "Call a plugin action",
+  handler: async (input) => runPlugin(input), // input: unknown
+});
+```
+
+`toModelOutput` maps the handler's result to the `ToolResultOutput` the model sees. `toolsCalled` and the `tool-call-complete` event keep the raw result.
+
+`onInputStart`, `onInputDelta` and `onInputAvailable` get the same `{ abortSignal, toolCallId }` context as the handler. `onInputDelta` fires only in `stream()`. In `run()`, `onInputStart` fires right before `onInputAvailable`.
+
+`defineDynamicTool` is for tools whose input is not known until run time. The handler gets the input unvalidated. `onError` and `timeoutMs` work as in `defineTool`.
 
 ## Streaming
 
@@ -126,6 +172,8 @@ for await (const event of agent.stream("Where is order A1? Refund it.")) {
 | `start` | `timestamp` | First, always |
 | `thinking` | `content` | For each reasoning delta |
 | `text-delta` | `content` | For each text delta |
+| `tool-input-start` | `name`, `toolCallId` | When the model starts streaming a tool's input |
+| `tool-input-delta` | `toolCallId`, `delta` | For each chunk of a tool's input |
 | `tool-call-start` | `name`, `input`, `toolCallId` | When the model calls a tool |
 | `tool-call-complete` | `name`, `output`, `toolCallId`, `durationMs` | When a tool returns |
 | `tool-call-error` | `name`, `error`, `toolCallId` | When a tool throws or times out |
@@ -220,6 +268,8 @@ const agent = createAgent({
 Between turns, before a run starts, the stored history is estimated at 4 characters per token. When it is over budget, every turn except the last `keepRecentTurns` (default 4) is summarised in one call. The summary becomes a leading `Summary of earlier conversation: ...` message. The cut falls on turn boundaries. Attachments reach the summariser as a short placeholder, never as base64. The summary call's usage and cost are added to that run's result. `summarize.model` defaults to the agent's model and goes through the same retry.
 
 Inside a run, before each model call, the prompt is estimated again. The estimate is calibrated against the `inputTokens` the provider reported for earlier steps of the same run. When it is over budget, reasoning and tool content is pruned from history older than the current turn. The current turn is never pruned, because providers need its thinking blocks and tool calls unchanged.
+
+`context.prune` sets the `pruneMessages` options used for that pruning: `{ reasoning, toolCalls }`, both `"all"` by default. `pruneMessages` is re-exported.
 
 `estimateTokens`, `trimForStep` and `summarizeHistory` are exported for use with a raw `ToolLoopAgent`. Build one `trimForStep` per run, since it keeps calibration state.
 
@@ -437,6 +487,8 @@ The types are exported from the package root. This section lists what the types 
 | `systemPrompt` | required | Sent as the SDK's `instructions` |
 | `tools` | required | Any `ToolSet`; `{}` for none |
 | `maxIterations` | `10` | Model calls per run |
+| `stopWhen` | none | Extra stop conditions; see [loop control](#loop-control) |
+| `prepareStep` | none | Per-step overrides; see [loop control](#loop-control) |
 | `maxOutputTokens` | `4096` | Per model call |
 | `conversation` | `{ maxMessages: 20, ttlMs: 600000 }` | See [history](#attachments-and-history) |
 | `thinking` | off | See [thinking](#thinking-and-provider-options) |
@@ -444,7 +496,7 @@ The types are exported from the package root. This section lists what the types 
 | `retry` | see [retries](#retries) | An explicit `undefined` field takes its default |
 | `timeout` | none | `{ totalMs, toolMs }` |
 | `pricing` | none | Enables `result.cost` |
-| `context` | none | `{ maxInputTokens, summarize? }` |
+| `context` | none | `{ maxInputTokens, summarize?, prune? }` |
 | `telemetry` | none | The SDK's `TelemetryOptions` |
 | `logger`, `traceId` | none | |
 | hooks | none | See [hooks](#hooks-and-logging) |
@@ -469,6 +521,18 @@ The types are exported from the package root. This section lists what the types 
 | `usage` | Input, output, total, cache read, cache write and reasoning tokens, summed over steps and any summary call |
 | `cost` | Present when `pricing` is set |
 | `thinking` | The final step's reasoning text, when there is any |
+
+`defineTool(options)`
+
+| Option | |
+|--------|--|
+| `description`, `schema`, `handler` | required |
+| `onError` | Turns a thrown error into the result the model sees |
+| `timeoutMs` | Bounds the call; overrides `timeout.toolMs` |
+| `toModelOutput` | `(output, { toolCallId, input }) => ToolResultOutput` |
+| `onInputStart`, `onInputDelta`, `onInputAvailable` | See [tool features](#tool-features) |
+
+`defineDynamicTool(options)` takes `description`, `handler`, `onError` and `timeoutMs`.
 
 `agent.uiStream(uiMessages, options)` returns a `ReadableStream<UIMessageChunk>` for a chat UI. It takes the same options except `attachments` and leaves history alone. See [UI message streams](#ui-message-streams).
 

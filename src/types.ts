@@ -1,12 +1,16 @@
 import type {
   LanguageModel,
   ModelMessage,
+  PrepareStepFunction,
+  pruneMessages,
+  StopCondition,
   TelemetryOptions,
   Tool,
   ToolLoopAgentSettings,
   ToolSet,
+  UIMessage,
+  UIMessageChunk,
 } from "ai";
-import type { UIMessage, UIMessageChunk } from "ai";
 
 /** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`; the SDK's own type (JSON values only). */
 export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
@@ -94,6 +98,11 @@ export interface ConversationConfig {
 export interface ContextConfig {
   maxInputTokens: number;
   summarize?: { model?: LanguageModel; keepRecentTurns?: number; instructions?: string };
+  /** How `pruneMessages` trims history once over budget; both default to `"all"`. */
+  prune?: {
+    reasoning?: Parameters<typeof pruneMessages>[0]["reasoning"];
+    toolCalls?: Parameters<typeof pruneMessages>[0]["toolCalls"];
+  };
 }
 
 // History is stored as the SDK's own messages, so nothing is lost on replay.
@@ -156,6 +165,8 @@ export type AgentEvent =
   | { type: "start"; timestamp: number }
   | { type: "text-delta"; content: string }
   | { type: "text-complete"; content: string }
+  | { type: "tool-input-start"; name: string; toolCallId: string }
+  | { type: "tool-input-delta"; toolCallId: string; delta: string }
   | { type: "tool-call-start"; name: string; input: unknown; toolCallId: string }
   | {
       type: "tool-call-complete";
@@ -195,6 +206,10 @@ export interface AgentOptions extends AgentHooks {
   systemPrompt: string;
   tools: ToolSet;
   maxIterations?: number;
+  /** Extra stop conditions; the loop still stops at `maxIterations`. */
+  stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
+  /** Runs before each step, after context trimming; its fields win and its `messages` replace the trimmed ones. */
+  prepareStep?: PrepareStepFunction<ToolSet>;
   maxOutputTokens?: number;
   conversation?: ConversationConfig;
   thinking?: ThinkingConfig;
@@ -224,6 +239,7 @@ export type StopReason =
   | "error"
   | "aborted"
   | "timeout"
+  | "stop_condition"
   | "other";
 
 export interface AgentResult {

@@ -21,7 +21,7 @@ describe("toStopReason", () => {
     expect(toStopReason("tool-calls", 3, 3)).toBe("max_iterations");
   });
 
-  it("maps 'tool-calls' to 'other' when the step cap was not reached", () => {
-    expect(toStopReason("tool-calls", 1, 10)).toBe("other");
+  it("maps 'tool-calls' to 'stop_condition' when the step cap was not reached", () => {
+    expect(toStopReason("tool-calls", 1, 10)).toBe("stop_condition");
   });
 });

@@ -13,6 +13,12 @@ export function toAgentEvent(
     case "reasoning-delta":
       return { type: "thinking", content: part.text };
 
+    case "tool-input-start":
+      return { type: "tool-input-start", name: part.toolName, toolCallId: part.id };
+
+    case "tool-input-delta":
+      return { type: "tool-input-delta", toolCallId: part.id, delta: part.delta };
+
     case "tool-call":
       return {
         type: "tool-call-start",

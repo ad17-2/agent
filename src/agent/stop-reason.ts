@@ -10,7 +10,7 @@ export function toStopReason(
     case "stop":
       return "end_turn";
     case "tool-calls":
-      return stepCount >= maxIterations ? "max_iterations" : "other";
+      return stepCount >= maxIterations ? "max_iterations" : "stop_condition";
     case "length":
       return "max_tokens";
     case "content-filter":

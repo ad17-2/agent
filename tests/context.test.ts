@@ -103,6 +103,17 @@ describe("trimForStep", () => {
     expect(JSON.stringify(result?.messages)).not.toEqual(JSON.stringify(messages));
   });
 
+  it("prunes with the configured prune options instead of the 'all' defaults", async () => {
+    const cfg: ContextConfig = { maxInputTokens: 1, prune: { toolCalls: "none" } };
+    const prepareStep = trimForStep(cfg);
+    const messages = [...buildTurns(2), { role: "user", content: "now" } as const];
+
+    const result = await prepareStep(prepareStepOptions(messages, 0));
+
+    expect(result?.messages).toBeDefined();
+    expect(JSON.stringify(result?.messages)).toContain("tool-call");
+  });
+
   it("calibrates chars/token from the previous step's own prompt and measured inputTokens", async () => {
     // step 0's prompt is ~420 chars and the model measured 420 tokens for it (1 char/token).
     // step 1 adds a 2000-char response. Calibrated: ~2420 tokens > 1000 budget, so prune.
