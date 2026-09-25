@@ -56,6 +56,7 @@ node examples/streaming.ts          # one example, after pnpm build
 | [`streaming.ts`](examples/streaming.ts) | every `AgentEvent`, a failing tool, a stream that fails mid-output |
 | [`loop-control.ts`](examples/loop-control.ts) | `stopWhen: hasToolCall(...)`, `prepareStep` narrowing the tools per step |
 | [`tool-features.ts`](examples/tool-features.ts) | `toModelOutput`, the input streaming hooks and events, `defineDynamicTool` |
+| [`tool-approval.ts`](examples/tool-approval.ts) | a gated tool, `needs_approval`, resuming with `{ approvals }` |
 | [`attachments-and-history.ts`](examples/attachments-and-history.ts) | an image turn, export and import, what the next model call receives |
 | [`cost-and-context.ts`](examples/cost-and-context.ts) | a price table, `result.cost`, summarisation between turns |
 | [`retry-and-timeouts.ts`](examples/retry-and-timeouts.ts) | a retried 529, a per-tool timeout, a run timeout |
@@ -90,6 +91,7 @@ A run stops after `maxIterations` model calls (default 10). `stopReason` maps th
 | `end_turn` | The model finished its answer |
 | `max_iterations` | The run hit `maxIterations` while the model still wanted tools |
 | `stop_condition` | A `stopWhen` condition ended the run while the model still wanted tools |
+| `needs_approval` | A gated tool is waiting for a decision; see [tool approval](#tool-approval) |
 | `max_tokens` | The response hit `maxOutputTokens` (default 4096) |
 | `content_filter` | The provider filtered the output |
 | `aborted` | The caller's `abortSignal` fired |
@@ -146,6 +148,45 @@ const plugin = defineDynamicTool({
 
 `defineDynamicTool` is for tools whose input is not known until run time. The handler gets the input unvalidated. `onError` and `timeoutMs` work as in `defineTool`.
 
+## Tool approval
+
+```typescript
+const agent = createAgent({ model, systemPrompt, tools, toolApproval: { deleteFile: "user-approval" } });
+
+let result = await agent.run("clean up the temp dir");
+if (result.stopReason === "needs_approval") {
+  const approvals = await askHuman(result.pendingApprovals); // [{ approvalId, approved, reason? }]
+  result = await agent.run({ approvals }); // approved tools run, then the loop continues
+}
+```
+
+`toolApproval` is the SDK's `ToolApprovalConfiguration`: a map from tool name to `"user-approval"`, `"approved"`, `"denied"`, `{ type, reason }` or a function of the input, or one function for every call. A `"user-approval"` call stops the run before the tool runs, with `stopReason: "needs_approval"` and one `PendingApproval` per gated call: `{ approvalId, toolCallId, toolName, input, reason? }`. `"approved"` and `"denied"` decide without stopping; a denied call is in `toolsCalled` with `error: "denied"` and the reason.
+
+`run({ approvals })` answers the pending requests and continues the same turn: the approved tools run, denied ones give the model an `execution-denied` result with the reason, and the loop goes on. Every pending id must be decided exactly once, or the call throws `AgentError("INVALID_APPROVAL")` and history is untouched. A text turn while approvals are pending throws `AgentError("APPROVAL_PENDING")`. The resume does not call `onStart`, ignores `attachments`, and counts `iterations` from zero. The resumed tools are the first entries of its `toolsCalled`.
+
+```typescript
+for await (const evt of agent.stream("deploy it")) {
+  if (evt.type === "approval-request") ui.showApprovalCard(evt.approval);
+  if (evt.type === "complete" && evt.result.stopReason === "needs_approval") pending = evt.result.pendingApprovals;
+}
+for await (const evt of agent.stream({ approvals: decisions })) render(evt);
+```
+
+`stream()` yields `approval-request` as each gated call is issued, then ends with `complete` as usual. A resumed stream yields `tool-call-complete` for the approved tools before its first `step-complete`.
+
+```typescript
+// process A
+const r = await agent.run("rotate the keys");
+if (r.stopReason === "needs_approval") await db.save(sessionId, agent.exportHistory());
+
+// process B, hours later
+agent.importHistory(await db.load(sessionId));
+const pending = agent.pendingApprovals(); // same ids as r.pendingApprovals
+await agent.run({ approvals: pending.map((p) => ({ approvalId: p.approvalId, approved: policy(p) })) });
+```
+
+The request lives in history as the SDK's own `tool-approval-request` part, so `exportHistory()` carries it and `agent.pendingApprovals()` rebuilds the list from history. Eviction keeps the request and its answer in one turn, and a resume never summarises. Two limits: an approved tool that ran before an abort or timeout runs again on the next resume, so gated tools should be idempotent; and `conversation.ttlMs` expiry drops a pending turn like any other, so a wait longer than that goes through export and import.
+
 ## Streaming
 
 ```typescript
@@ -176,13 +217,14 @@ for await (const event of agent.stream("Where is order A1? Refund it.")) {
 | `tool-input-delta` | `toolCallId`, `delta` | For each chunk of a tool's input |
 | `tool-call-start` | `name`, `input`, `toolCallId` | When the model calls a tool |
 | `tool-call-complete` | `name`, `output`, `toolCallId`, `durationMs` | When a tool returns |
-| `tool-call-error` | `name`, `error`, `toolCallId` | When a tool throws or times out |
+| `tool-call-error` | `name`, `error`, `toolCallId` | When a tool throws or times out, or its approval is denied |
+| `approval-request` | `approval` | When a gated tool waits for a decision; see [tool approval](#tool-approval) |
 | `step-complete` | `stepIndex`, `toolsCalled`, `usage` | After each model call and its tools |
 | `text-complete` | `content` | Once, with the final text |
 | `error` | `error` | When a model call fails |
 | `complete` | `result` | Last, with the same `AgentResult` as `run()` |
 
-`stream()` does not throw. A failed model call yields `error`, then `complete` with `stopReason: "error"`, and calls `onError` with `phase: "api"`. An abort or timeout yields `complete` with `stopReason: "aborted"` or `"timeout"` and no `error` event.
+`stream()` does not throw on a failed run; invalid approvals or a text turn while approvals are pending throw as in `run()`. A failed model call yields `error`, then `complete` with `stopReason: "error"`, and calls `onError` with `phase: "api"`. An abort or timeout yields `complete` with `stopReason: "aborted"` or `"timeout"` and no `error` event.
 
 Breaking out of the loop aborts the run. The in-flight model request and any running tool see the abort, the run timer is cleared, and the turn is not added to history. No further events or hooks run after a break.
 
@@ -435,7 +477,7 @@ const agent = createAgent({
 
 | Hook | Called |
 |------|--------|
-| `onStart(input)` | Before the first model call |
+| `onStart(input)` | Before the first model call; not on a resume with `{ approvals }` |
 | `onStep(step)` | After each step, with its tool records and text |
 | `onToolCall(name, input)` | Before a tool runs |
 | `onToolResult(name, output)` | After a tool returns |
@@ -471,6 +513,8 @@ try {
 |------|-----------|
 | `API_ERROR` | `run()`, when a model call fails after retries or a hook throws; `cause` is the original error |
 | `INVALID_HISTORY` | `importHistory()`, for a `version` other than 1 or 2 |
+| `INVALID_APPROVAL` | `run({ approvals })` and `stream({ approvals })`, for an unknown, duplicate or missing id, or when nothing is pending |
+| `APPROVAL_PENDING` | `run(text)` and `stream(text)`, while approvals are pending |
 | `MCP_TOOL_CONFLICT` | `loadMcpTools()`, when two servers expose the same tool name |
 
 Tool failures, aborts and timeouts are not thrown; see [Tools and runs](#tools-and-runs).
@@ -489,6 +533,7 @@ The types are exported from the package root. This section lists what the types 
 | `maxIterations` | `10` | Model calls per run |
 | `stopWhen` | none | Extra stop conditions; see [loop control](#loop-control) |
 | `prepareStep` | none | Per-step overrides; see [loop control](#loop-control) |
+| `toolApproval` | none | The SDK's `ToolApprovalConfiguration`; see [tool approval](#tool-approval) |
 | `maxOutputTokens` | `4096` | Per model call |
 | `conversation` | `{ maxMessages: 20, ttlMs: 600000 }` | See [history](#attachments-and-history) |
 | `thinking` | off | See [thinking](#thinking-and-provider-options) |
@@ -503,9 +548,11 @@ The types are exported from the package root. This section lists what the types 
 
 `agent.run(input, options)` and `agent.stream(input, options)`
 
+`input` is a string, or `{ approvals: ApprovalDecision[] }` to resume a run stopped with `needs_approval`.
+
 | Option | |
 |--------|--|
-| `attachments` | Images, PDFs or files for this turn |
+| `attachments` | Images, PDFs or files for this turn; ignored on a resume |
 | `abortSignal` | Cancels the run; the result has `stopReason: "aborted"` |
 | `timeoutMs` | Overrides `timeout.totalMs`; `0` disables it |
 | `traceId` | Log trace id and telemetry `functionId` for this run |
@@ -521,6 +568,7 @@ The types are exported from the package root. This section lists what the types 
 | `usage` | Input, output, total, cache read, cache write and reasoning tokens, summed over steps and any summary call |
 | `cost` | Present when `pricing` is set |
 | `thinking` | The final step's reasoning text, when there is any |
+| `pendingApprovals` | Present when `stopReason` is `needs_approval`; see [tool approval](#tool-approval) |
 
 `defineTool(options)`
 
@@ -537,6 +585,8 @@ The types are exported from the package root. This section lists what the types 
 `agent.uiStream(uiMessages, options)` returns a `ReadableStream<UIMessageChunk>` for a chat UI. It takes the same options except `attachments` and leaves history alone. See [UI message streams](#ui-message-streams).
 
 `generateStructured(options)` and `streamStructured(options)` take `{ model, schema, prompt, attachments?, maxOutputTokens?, abortSignal? }`. See [structured output](#structured-output).
+
+`agent.pendingApprovals()` returns the approvals the last turn is waiting on, read from history.
 
 `agent.clearHistory()`, `agent.exportHistory()` and `agent.importHistory(history)` manage the stored conversation.
 

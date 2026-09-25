@@ -44,6 +44,27 @@ export function toAgentEvent(
         toolCallId: part.toolCallId,
       };
 
+    case "tool-approval-request":
+      if (part.isAutomatic) return undefined;
+      return {
+        type: "approval-request",
+        approval: {
+          approvalId: part.approvalId,
+          toolCallId: part.toolCall.toolCallId,
+          toolName: part.toolCall.toolName,
+          input: part.toolCall.input,
+          ...(part.reason !== undefined ? { reason: part.reason } : {}),
+        },
+      };
+
+    case "tool-output-denied":
+      return {
+        type: "tool-call-error",
+        name: part.toolName,
+        error: "denied",
+        toolCallId: part.toolCallId,
+      };
+
     case "error":
       return {
         type: "error",

@@ -31,8 +31,9 @@ export function estimateTokens(
   return Math.ceil(charsOf(messages) / charsPerToken);
 }
 
-// Prunes only the history before this run's user message: Anthropic needs the run's own thinking
-// blocks returned unchanged. Calibration state lives in the closure, so build one per run.
+// Prunes only the history before this run's last user message: Anthropic needs the run's own thinking
+// blocks returned unchanged, and a resume's tool message must keep the tool call it answers.
+// Calibration state lives in the closure, so build one per run.
 export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
   let samples: Array<{ chars: number; tokens: number }> = [];
   let lastPromptChars = 0;
@@ -49,7 +50,7 @@ export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
     return (chars * last.tokens) / last.chars;
   };
 
-  return ({ messages, steps, stepNumber, responseMessages }) => {
+  return ({ messages, steps, stepNumber }) => {
     if (stepNumber === 0) samples = [];
     const lastStep = steps[steps.length - 1];
     if (lastStep?.usage.inputTokens && lastPromptChars > 0) {
@@ -64,7 +65,9 @@ export function trimForStep(cfg: ContextConfig): PrepareStepFunction<ToolSet> {
       return {};
     }
 
-    const historyCount = messages.length - 1 - responseMessages.length;
+    let historyCount = messages.length;
+    while (historyCount > 0 && messages[historyCount - 1]?.role !== "user") historyCount--;
+    if (historyCount > 0) historyCount--;
     const trimmed = [
       ...pruneMessages({
         messages: messages.slice(0, historyCount),

@@ -6,6 +6,7 @@ import type {
   StopCondition,
   TelemetryOptions,
   Tool,
+  ToolApprovalConfiguration,
   ToolLoopAgentSettings,
   ToolSet,
   UIMessage,
@@ -152,6 +153,24 @@ export interface Cost {
   unpricedModels: string[];
 }
 
+/** A tool call waiting for a human decision; `approvalId` is what `ApprovalDecision` answers. */
+export interface PendingApproval {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  reason?: string;
+}
+
+export interface ApprovalDecision {
+  approvalId: string;
+  approved: boolean;
+  reason?: string;
+}
+
+/** A new message, or the decisions that resume a run stopped with `needs_approval`. */
+export type AgentInput = string | { approvals: ApprovalDecision[] };
+
 export interface ToolCallRecord {
   name: string;
   input: unknown;
@@ -178,6 +197,7 @@ export type AgentEvent =
   | { type: "tool-call-error"; name: string; error: string; toolCallId: string }
   | { type: "step-complete"; stepIndex: number; toolsCalled: ToolCallRecord[]; usage: TokenUsage }
   | { type: "thinking"; content: string }
+  | { type: "approval-request"; approval: PendingApproval }
   | { type: "complete"; result: AgentResult }
   | { type: "error"; error: Error };
 
@@ -210,6 +230,8 @@ export interface AgentOptions extends AgentHooks {
   stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   /** Runs before each step, after context trimming; its fields win and its `messages` replace the trimmed ones. */
   prepareStep?: PrepareStepFunction<ToolSet>;
+  /** Which tools need approval before they run; `"user-approval"` stops the run with `needs_approval`. */
+  toolApproval?: ToolApprovalConfiguration<ToolSet, { traceId?: string }>;
   maxOutputTokens?: number;
   conversation?: ConversationConfig;
   thinking?: ThinkingConfig;
@@ -240,6 +262,7 @@ export type StopReason =
   | "aborted"
   | "timeout"
   | "stop_condition"
+  | "needs_approval"
   | "other";
 
 export interface AgentResult {
@@ -250,11 +273,18 @@ export interface AgentResult {
   usage: TokenUsage;
   cost?: Cost;
   thinking?: string;
+  /** Present only when `stopReason` is `"needs_approval"`. */
+  pendingApprovals?: PendingApproval[];
 }
 
 export interface Agent {
-  run(input: string, options?: RunOptions): Promise<AgentResult>;
-  stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
+  run(input: AgentInput, options?: RunOptions): Promise<AgentResult>;
+  stream(
+    input: AgentInput,
+    options?: RunOptions
+  ): AsyncGenerator<AgentEvent, AgentResult, undefined>;
+  /** The approvals the last turn is waiting on, read from history; `[]` when there are none. */
+  pendingApprovals(): PendingApproval[];
   /** Streams the SDK's UI message chunks for client-owned messages; history is neither read nor written. */
   uiStream(uiMessages: UIMessage[], options?: RunOptions): Promise<ReadableStream<UIMessageChunk>>;
   clearHistory(): void;

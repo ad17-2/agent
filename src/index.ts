@@ -23,8 +23,11 @@ export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } f
 
 export type {
   Agent,
+  AgentInput,
   AgentOptions,
   AgentResult,
+  ApprovalDecision,
+  PendingApproval,
   RunOptions,
   ConversationConfig,
   ToolCallRecord,
@@ -70,6 +73,7 @@ export type {
   TelemetryOptions,
   StopCondition,
   PrepareStepFunction,
+  ToolApprovalConfiguration,
   UIMessage,
   UIMessageChunk,
 } from "ai";

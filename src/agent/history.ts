@@ -1,5 +1,12 @@
 import { AgentError } from "../errors.js";
-import type { Message, SerializedHistory, SerializedHistoryV1 } from "../types.js";
+import type {
+  ApprovalDecision,
+  Message,
+  PendingApproval,
+  SerializedHistory,
+  SerializedHistoryV1,
+  ToolCallRecord,
+} from "../types.js";
 
 export interface HistoryConfig {
   maxMessages: number;
@@ -31,6 +38,106 @@ function evictTurns(history: ReadonlyArray<Message>, maxMessages: number): Messa
     start--;
   }
   return turns.slice(start).flat();
+}
+
+/**
+ * Requests with no matching response yet, joined to their tool call for the name and input.
+ * The stored request part carries only `toolCallId`; automatic approve/deny requests are never pending.
+ */
+export function pendingApprovals(history: ReadonlyArray<Message>): PendingApproval[] {
+  const calls = new Map<string, { toolName: string; input: unknown }>();
+  const pending = new Map<string, PendingApproval>();
+  for (const msg of history) {
+    if (typeof msg.content === "string") continue;
+    for (const part of msg.content) {
+      if (part.type === "tool-call") {
+        calls.set(part.toolCallId, { toolName: part.toolName, input: part.input });
+      } else if (part.type === "tool-approval-request" && !part.isAutomatic) {
+        const call = calls.get(part.toolCallId);
+        if (!call) continue;
+        pending.set(part.approvalId, {
+          approvalId: part.approvalId,
+          toolCallId: part.toolCallId,
+          ...call,
+          ...(part.reason !== undefined ? { reason: part.reason } : {}),
+        });
+      } else if (part.type === "tool-approval-response") {
+        pending.delete(part.approvalId);
+      }
+    }
+  }
+  return [...pending.values()];
+}
+
+/** The tool message that answers every pending request; throws INVALID_APPROVAL unless each id is decided exactly once. */
+export function approvalResponseMessage(
+  pending: ReadonlyArray<PendingApproval>,
+  decisions: ReadonlyArray<ApprovalDecision>
+): Message {
+  if (pending.length === 0) {
+    throw new AgentError("No approval is pending", "INVALID_APPROVAL");
+  }
+  const pendingIds = new Set(pending.map((p) => p.approvalId));
+  const seen = new Set<string>();
+  const unknown: string[] = [];
+  const duplicate: string[] = [];
+  for (const { approvalId } of decisions) {
+    if (!pendingIds.has(approvalId)) unknown.push(approvalId);
+    else if (seen.has(approvalId)) duplicate.push(approvalId);
+    seen.add(approvalId);
+  }
+  const missing = [...pendingIds].filter((id) => !seen.has(id));
+  const problems = [
+    ...(unknown.length > 0 ? [`unknown: ${unknown.join(", ")}`] : []),
+    ...(duplicate.length > 0 ? [`duplicate: ${duplicate.join(", ")}`] : []),
+    ...(missing.length > 0 ? [`missing: ${missing.join(", ")}`] : []),
+  ];
+  if (problems.length > 0) {
+    throw new AgentError(`Invalid approval ids (${problems.join("; ")})`, "INVALID_APPROVAL");
+  }
+  return {
+    role: "tool",
+    content: decisions.map((d) => ({
+      type: "tool-approval-response",
+      approvalId: d.approvalId,
+      approved: d.approved,
+      ...(d.reason !== undefined ? { reason: d.reason } : {}),
+    })),
+  };
+}
+
+/**
+ * Records for the tools the SDK ran (or denied) before step 0 of a resume. Their results are in
+ * the first response message and in no step, and the output is the model-facing value.
+ */
+export function preLoopToolRecords(
+  pending: ReadonlyArray<PendingApproval>,
+  responseMessages: ReadonlyArray<Message>,
+  timings: ReadonlyMap<string, number>
+): ToolCallRecord[] {
+  const first = responseMessages[0];
+  if (first?.role !== "tool") return [];
+  const records: ToolCallRecord[] = [];
+  for (const { toolCallId, toolName, input } of pending) {
+    const result = first.content.find(
+      (part) => part.type === "tool-result" && part.toolCallId === toolCallId
+    );
+    if (result?.type !== "tool-result") continue;
+    const { output } = result;
+    const record: ToolCallRecord = {
+      name: toolName,
+      input,
+      output: output.type === "text" || output.type === "json" ? output.value : undefined,
+      durationMs: timings.get(toolCallId) ?? 0,
+    };
+    if (output.type === "execution-denied") {
+      record.error = output.reason === undefined ? "denied" : `denied: ${output.reason}`;
+    } else if (output.type === "error-text" || output.type === "error-json") {
+      record.error = typeof output.value === "string" ? output.value : JSON.stringify(output.value);
+    }
+    records.push(record);
+  }
+  return records;
 }
 
 function textOf(content: string | unknown[]): string {
@@ -88,12 +195,12 @@ export class HistoryManager {
     this.lastUpdated = Date.now();
   }
 
-  /** Appends a user turn and the SDK's own response messages, preserving tool calls/results and file parts. */
-  append(userMessage: Message, responseMessages: Message[]): void {
+  /** Appends the turn's input message (user, or tool on a resume) and the SDK's own response messages. */
+  append(inputMessage: Message, responseMessages: Message[]): void {
     const timestamp = Date.now();
     this.save([
       ...this.messages,
-      { ...userMessage, timestamp },
+      { ...inputMessage, timestamp },
       ...responseMessages.map((msg) => ({ ...msg, timestamp })),
     ]);
   }

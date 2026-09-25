@@ -13,15 +13,21 @@ describe("toStopReason", () => {
 
   for (const [finishReason, expected] of finishReasons) {
     it(`maps '${finishReason}' to '${expected}'`, () => {
-      expect(toStopReason(finishReason, 1, 10)).toBe(expected);
+      expect(toStopReason(finishReason, 1, 10, false)).toBe(expected);
     });
   }
 
   it("maps 'tool-calls' to 'max_iterations' when the step cap was reached", () => {
-    expect(toStopReason("tool-calls", 3, 3)).toBe("max_iterations");
+    expect(toStopReason("tool-calls", 3, 3, false)).toBe("max_iterations");
   });
 
   it("maps 'tool-calls' to 'stop_condition' when the step cap was not reached", () => {
-    expect(toStopReason("tool-calls", 1, 10)).toBe("stop_condition");
+    expect(toStopReason("tool-calls", 1, 10, false)).toBe("stop_condition");
+  });
+
+  it("16. a pending approval wins over the step cap, so the run stays resumable", () => {
+    expect(toStopReason("tool-calls", 3, 10, false)).toBe("stop_condition");
+    expect(toStopReason("tool-calls", 3, 10, true)).toBe("needs_approval");
+    expect(toStopReason("tool-calls", 10, 10, true)).toBe("needs_approval");
   });
 });

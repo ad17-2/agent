@@ -35,6 +35,9 @@
 - `stream()` yields `tool-input-start` and `tool-input-delta` events.
 - `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`.
 - `agent.uiStream(uiMessages)` returns the SDK's UI message stream for a chat UI. It does not touch history. `createUIMessageStreamResponse`, `UIMessage` and `UIMessageChunk` are re-exported.
+- `AgentOptions.toolApproval` gates tools with the SDK's `ToolApprovalConfiguration` (re-exported). A `"user-approval"` tool stops the run with `stopReason: "needs_approval"` and `result.pendingApprovals`; `stream()` yields an `approval-request` event per gated call.
+- `run()` and `stream()` also take `{ approvals: ApprovalDecision[] }`, which answers every pending approval and continues the turn. `AgentInput` is the widened input type; a plain string works as before. `agent.pendingApprovals()` reads the pending list from history, so it survives export and import.
+- Error codes `INVALID_APPROVAL` (an unknown, duplicate or missing id, or nothing pending) and `APPROVAL_PENDING` (a text turn while approvals are pending).
 
 ### Migrating from 0.5.x
 

@@ -16,12 +16,15 @@ import { buildUserMessage } from "../message.js";
 import type {
   Agent,
   AgentEvent,
+  AgentInput,
   AgentOptions,
   AgentResult,
+  ApprovalDecision,
   Attachment,
   Cost,
   LogLevel,
   Message,
+  PendingApproval,
   RetryConfig,
   RunOptions,
   SerializedHistory,
@@ -40,7 +43,12 @@ import { addCost, sumCost } from "../cost.js";
 import { estimateTokens, summarizeHistory, trimForStep } from "../context.js";
 import { addUsage, toTokenUsage, zeroUsage } from "../usage.js";
 import { toAgentEvent } from "./events.js";
-import { HistoryManager } from "./history.js";
+import {
+  HistoryManager,
+  approvalResponseMessage,
+  pendingApprovals,
+  preLoopToolRecords,
+} from "./history.js";
 import { buildProviderOptions, modelIdOf, resolveModel } from "./model.js";
 import { StepRecorder } from "./recorder.js";
 import { toStopReason } from "./stop-reason.js";
@@ -60,17 +68,22 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
   retryOn: isRetryableError,
 };
 
+type TurnInput =
+  | { kind: "message"; text: string; attachments: Attachment[] | undefined }
+  | { kind: "resume"; approvals: ApprovalDecision[] };
+
 interface Turn {
   kind: "run" | "stream";
-  input: string;
-  attachments: Attachment[] | undefined;
+  input: TurnInput;
   traceId: string | undefined;
   run: RunSignal;
   recorder: StepRecorder;
 }
 
 interface TurnStart {
-  userMessage: Message;
+  inputMessage: Message;
+  /** The requests this turn answers; empty on a message turn. */
+  pending: PendingApproval[];
   messages: Message[];
   extra: { usage: TokenUsage; cost?: Cost };
 }
@@ -106,6 +119,7 @@ export function createAgent(options: AgentOptions): Agent {
     maxIterations = DEFAULT_MAX_ITERATIONS,
     stopWhen = [],
     prepareStep,
+    toolApproval,
     maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS,
     conversation,
     thinking,
@@ -168,6 +182,7 @@ export function createAgent(options: AgentOptions): Agent {
       timeoutConfig
     ),
     stopWhen: [isStepCount(maxIterations), ...(Array.isArray(stopWhen) ? stopWhen : [stopWhen])],
+    toolApproval,
     maxOutputTokens,
     maxRetries: 0,
     providerOptions: buildProviderOptions(thinking, extraProviderOptions),
@@ -217,45 +232,83 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   /** Logs the start and arms the run signal; the timer runs from here. */
-  function openTurn(kind: Turn["kind"], input: string, runOptions: RunOptions | undefined): Turn {
+  function openTurn(
+    kind: Turn["kind"],
+    input: AgentInput,
+    runOptions: RunOptions | undefined
+  ): Turn {
     const { attachments, traceId, timeoutMs, abortSignal } = runOptions ?? {};
     log("info", `Agent ${kind} started`, {
-      input: input.slice(0, 100),
+      input:
+        typeof input === "string" ? input.slice(0, 100) : `${input.approvals.length} approvals`,
       traceId: traceId ?? agentTraceId,
     });
     return {
       kind,
-      input,
-      attachments,
+      input:
+        typeof input === "string"
+          ? { kind: "message", text: input, attachments }
+          : { kind: "resume", approvals: input.approvals },
       traceId,
       run: createRunSignal(timeoutMs ?? timeoutConfig?.totalMs, abortSignal),
       recorder: new StepRecorder(onStep),
     };
   }
 
-  /** Pre-abort check, onStart, summarisation and the user message; a signal state means the turn is over. */
+  /**
+   * Pre-abort check, then the turn's input message; a signal state means the turn is over.
+   * A message turn runs onStart and summarisation and refuses to start while approvals are pending.
+   * A resume turn continues the pending turn: no onStart, no summarisation, a tool message as input.
+   */
   async function startTurn(turn: Turn): Promise<TurnStart | NonNullable<SignalState>> {
     const state = turn.run.state();
     if (state) return state;
 
-    await onStart?.(turn.input);
+    const pending = pendingApprovals(historyManager.get());
+    if (turn.input.kind === "resume") {
+      const inputMessage = approvalResponseMessage(pending, turn.input.approvals);
+      return {
+        inputMessage,
+        pending,
+        messages: [...historyManager.get(), inputMessage],
+        extra: { usage: toTokenUsage(zeroUsage()) },
+      };
+    }
+    if (pending.length > 0) {
+      throw new AgentError(
+        `Approvals pending: ${pending.map((p) => p.approvalId).join(", ")}. Resume with { approvals } first.`,
+        "APPROVAL_PENDING"
+      );
+    }
+
+    await onStart?.(turn.input.text);
     const extra = await summarizeIfOverBudget(turn.run.signal);
-    const userMessage = buildUserMessage(turn.input, turn.attachments);
-    return { userMessage, messages: [...historyManager.get(), userMessage], extra };
+    const inputMessage = buildUserMessage(turn.input.text, turn.input.attachments);
+    return { inputMessage, pending, messages: [...historyManager.get(), inputMessage], extra };
   }
 
   async function finishTurn(turn: Turn, start: TurnStart, end: TurnEnd): Promise<AgentResult> {
-    historyManager.append(start.userMessage, end.responseMessages);
+    historyManager.append(start.inputMessage, end.responseMessages);
 
-    const stopReason = toStopReason(end.finishReason, end.steps.length, maxIterations);
+    const pending = pendingApprovals(end.responseMessages);
+    const stopReason = toStopReason(
+      end.finishReason,
+      end.steps.length,
+      maxIterations,
+      pending.length > 0
+    );
     const result: AgentResult = {
       message: end.text,
-      toolsCalled: turn.recorder.toolsCalled,
+      toolsCalled: [
+        ...preLoopToolRecords(start.pending, end.responseMessages, turn.recorder.toolTimings),
+        ...turn.recorder.toolsCalled,
+      ],
       iterations: end.steps.length,
       stopReason,
       usage: addUsage(toTokenUsage(end.usage), start.extra.usage),
       cost: pricing ? addCost(sumCost(end.steps, pricing), start.extra.cost) : undefined,
       thinking: end.reasoningText,
+      ...(pending.length > 0 ? { pendingApprovals: pending } : {}),
     };
 
     log("info", `Agent ${turn.kind} completed`, { iterations: result.iterations, stopReason });
@@ -291,7 +344,7 @@ export function createAgent(options: AgentOptions): Agent {
   }
 
   return {
-    async run(input: string, runOptions?: RunOptions): Promise<AgentResult> {
+    async run(input: AgentInput, runOptions?: RunOptions): Promise<AgentResult> {
       const turn = openTurn("run", input, runOptions);
       try {
         const start = await startTurn(turn);
@@ -301,6 +354,7 @@ export function createAgent(options: AgentOptions): Agent {
           messages: start.messages,
           abortSignal: turn.run.signal,
           options: { traceId: turn.traceId },
+          onToolExecutionEnd: (event) => turn.recorder.onToolExecutionEnd(event),
           onStepEnd: (step) => turn.recorder.onStepEnd(step),
         });
 
@@ -330,7 +384,7 @@ export function createAgent(options: AgentOptions): Agent {
     },
 
     async *stream(
-      input: string,
+      input: AgentInput,
       runOptions?: RunOptions
     ): AsyncGenerator<AgentEvent, AgentResult, undefined> {
       const turn = openTurn("stream", input, runOptions);
@@ -404,6 +458,8 @@ export function createAgent(options: AgentOptions): Agent {
           yield { type: "complete", result };
           return result;
         }
+        // A caller bug (bad approvals, text while pending) is thrown, as run() does; nothing ran.
+        if (error instanceof AgentError) throw error;
 
         const errorObj = error instanceof Error ? error : new Error(String(error));
         yield { type: "error", error: errorObj };
@@ -455,6 +511,10 @@ export function createAgent(options: AgentOptions): Agent {
         run.dispose();
         throw error;
       }
+    },
+
+    pendingApprovals(): PendingApproval[] {
+      return pendingApprovals(historyManager.get());
     },
 
     clearHistory(): void {
