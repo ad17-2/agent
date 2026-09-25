@@ -97,7 +97,7 @@ A run stops after `maxIterations` model calls (default 10). `stopReason` maps th
 | `aborted` | The caller's `abortSignal` fired |
 | `timeout` | The run timeout fired |
 | `error` | A streamed model call failed, or the provider finished with an error |
-| `other` | Any other finish reason |
+| `other` | The model called a tool that has no `execute` (the client runs it), or any other finish reason |
 
 `aborted` and `timeout` come back as a result, not an exception, with an empty `message` and zero `usage`. A turn that ends this way is not added to history.
 
@@ -160,7 +160,7 @@ if (result.stopReason === "needs_approval") {
 }
 ```
 
-`toolApproval` is the SDK's `ToolApprovalConfiguration`: a map from tool name to `"user-approval"`, `"approved"`, `"denied"`, `{ type, reason }` or a function of the input, or one function for every call. A `"user-approval"` call stops the run before the tool runs, with `stopReason: "needs_approval"` and one `PendingApproval` per gated call: `{ approvalId, toolCallId, toolName, input, reason? }`. `"approved"` and `"denied"` decide without stopping; a denied call is in `toolsCalled` with `error: "denied"` and the reason.
+`toolApproval` is the SDK's `ToolApprovalConfiguration`: a map from tool name to `"user-approval"`, `"approved"`, `"denied"`, `{ type, reason }` or a function of the input, or one function for every call. A `"user-approval"` call stops the run before the tool runs, with `stopReason: "needs_approval"` and one `PendingApproval` per gated call: `{ approvalId, toolCallId, toolName, input, reason?, providerExecuted? }`. `"approved"` and `"denied"` decide without stopping; a denied call is in `toolsCalled` with `error: "denied"`, or `"denied: <reason>"` when there is a reason.
 
 `run({ approvals })` answers the pending requests and continues the same turn: the approved tools run, denied ones give the model an `execution-denied` result with the reason, and the loop goes on. Every pending id must be decided exactly once, or the call throws `AgentError("INVALID_APPROVAL")` and history is untouched. A text turn while approvals are pending throws `AgentError("APPROVAL_PENDING")`. The resume does not call `onStart`, ignores `attachments`, and counts `iterations` from zero. The resumed tools are the first entries of its `toolsCalled`.
 
@@ -185,7 +185,7 @@ const pending = agent.pendingApprovals(); // same ids as r.pendingApprovals
 await agent.run({ approvals: pending.map((p) => ({ approvalId: p.approvalId, approved: policy(p) })) });
 ```
 
-The request lives in history as the SDK's own `tool-approval-request` part, so `exportHistory()` carries it and `agent.pendingApprovals()` rebuilds the list from history. Eviction keeps the request and its answer in one turn, and a resume never summarises. Two limits: an approved tool that ran before an abort or timeout runs again on the next resume, so gated tools should be idempotent; and `conversation.ttlMs` expiry drops a pending turn like any other, so a wait longer than that goes through export and import.
+The request lives in history as the SDK's own `tool-approval-request` part, so `exportHistory()` carries it and `agent.pendingApprovals()` rebuilds the list from history. Eviction keeps the request and its answer in one turn, and a resume never summarises. Two limits: after a failed resume (abort, timeout or model error) an approved tool that already ran runs again on the next resume, so gated tools should be idempotent; and `conversation.ttlMs` expiry drops a pending turn like any other, so a wait longer than that goes through export and import.
 
 ## Streaming
 
@@ -217,7 +217,7 @@ for await (const event of agent.stream("Where is order A1? Refund it.")) {
 | `tool-input-delta` | `toolCallId`, `delta` | For each chunk of a tool's input |
 | `tool-call-start` | `name`, `input`, `toolCallId` | When the model calls a tool |
 | `tool-call-complete` | `name`, `output`, `toolCallId`, `durationMs` | When a tool returns |
-| `tool-call-error` | `name`, `error`, `toolCallId` | When a tool throws or times out, or its approval is denied |
+| `tool-call-error` | `name`, `error`, `toolCallId` | When a tool throws or times out, or its approval is denied; a denial's `error` is `"denied"` with no reason, the record in `toolsCalled` carries it |
 | `approval-request` | `approval` | When a gated tool waits for a decision; see [tool approval](#tool-approval) |
 | `step-complete` | `stepIndex`, `toolsCalled`, `usage` | After each model call and its tools |
 | `text-complete` | `content` | Once, with the final text |
@@ -444,7 +444,7 @@ for await (const draft of partial) render(draft);
 const data = await output;
 ```
 
-`streamStructured` takes the same options and makes a `streamText` call. `partial` yields a deep-partial object each time the parsed JSON grows. `output` resolves to the validated object and rejects when it does not match the schema. `usage` resolves to `TokenUsage`.
+`streamStructured` takes the same options and makes a `streamText` call. `partial` yields a deep-partial object each time the parsed JSON grows. `output` resolves to the validated object and rejects when it does not match the schema; an `output` you never await does not reject unhandled. `usage` resolves to `TokenUsage`.
 
 ## Thinking and provider options
 

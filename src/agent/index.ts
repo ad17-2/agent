@@ -51,7 +51,7 @@ import {
 } from "./history.js";
 import { buildProviderOptions, modelIdOf, resolveModel } from "./model.js";
 import { StepRecorder } from "./recorder.js";
-import { toStopReason } from "./stop-reason.js";
+import { hasUnexecutedToolCall, toStopReason } from "./stop-reason.js";
 import { wrapToolsWithCallbacks } from "./tool-wrapper.js";
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -97,17 +97,20 @@ interface TurnEnd {
   reasoningText: string | undefined;
 }
 
+/** A model the user's hook returns is wrapped like the agent's own, so it gets the retry middleware. */
 function composePrepareStep(
   trim: PrepareStepFunction<ToolSet> | undefined,
-  user: PrepareStepFunction<ToolSet> | undefined
+  user: PrepareStepFunction<ToolSet> | undefined,
+  wrapModel: (model: LanguageModel) => LanguageModel
 ): PrepareStepFunction<ToolSet> | undefined {
-  if (!trim || !user) return trim ?? user;
+  if (!user) return trim;
   return async (stepOptions) => {
-    const trimmed = await trim(stepOptions);
+    const trimmed = await trim?.(stepOptions);
     const own = await user(
       trimmed?.messages ? { ...stepOptions, messages: trimmed.messages } : stepOptions
     );
-    return { ...trimmed, ...own };
+    const merged = { ...trimmed, ...own };
+    return merged.model ? { ...merged, model: wrapModel(merged.model) } : merged;
   };
 }
 
@@ -193,7 +196,8 @@ export function createAgent(options: AgentOptions): Agent {
       model: callModel(modelOption),
       prepareStep: composePrepareStep(
         contextConfig ? trimForStep(contextConfig) : undefined,
-        prepareStep
+        prepareStep,
+        callModel
       ),
       telemetry: telemetryConfig
         ? {
@@ -295,12 +299,18 @@ export function createAgent(options: AgentOptions): Agent {
       end.finishReason,
       end.steps.length,
       maxIterations,
-      pending.length > 0
+      pending.length > 0,
+      hasUnexecutedToolCall(end.steps.at(-1))
     );
     const result: AgentResult = {
       message: end.text,
       toolsCalled: [
-        ...preLoopToolRecords(start.pending, end.responseMessages, turn.recorder.toolTimings),
+        ...preLoopToolRecords(
+          start.pending,
+          end.responseMessages,
+          turn.recorder.toolTimings,
+          turn.recorder.toolOutputs
+        ),
         ...turn.recorder.toolsCalled,
       ],
       iterations: end.steps.length,

@@ -192,4 +192,40 @@ describe("streamStructured", () => {
 
     await expect(result.output).rejects.toThrow();
   });
+
+  it("returns the same promise on every read of output and usage", async () => {
+    const result = streamStructured({
+      model: streamModel(jsonDeltas('{"age":30}')),
+      schema: z.object({ age: z.number() }),
+      prompt: "Get age",
+    });
+
+    expect(result.output).toBe(result.output);
+    expect(result.usage).toBe(result.usage);
+    await result.output;
+  });
+
+  it("a destructured output that is never awaited does not reject unhandled on invalid JSON, and still rejects when awaited", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { partial, output } = streamStructured({
+        model: streamModel(jsonDeltas("{bad")),
+        schema: z.object({ a: z.number() }),
+        prompt: "p",
+      });
+      for await (const _ of partial) {
+        // drain
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(unhandled).toEqual([]);
+      await expect(output).rejects.toThrow();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

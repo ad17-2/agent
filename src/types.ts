@@ -160,6 +160,8 @@ export interface PendingApproval {
   toolName: string;
   input: unknown;
   reason?: string;
+  /** Set when the provider runs the tool; the decision is then forwarded to the model. */
+  providerExecuted?: true;
 }
 
 export interface ApprovalDecision {

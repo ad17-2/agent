@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { hasToolCall, isLoopFinished, type ModelMessage } from "ai";
+import { APICallError, hasToolCall, isLoopFinished, tool, type ModelMessage } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { createAgent } from "../src/agent/index.js";
 import { defineTool } from "../src/tool.js";
@@ -63,6 +63,19 @@ describe("stopWhen", () => {
     expect(result.stopReason).toBe("stop_condition");
   });
 
+  it("reports 'other' when the loop ends on a tool that has no execute, not 'stop_condition'", async () => {
+    const clientSide = tool({ description: "Runs on the client", inputSchema: z.object({}) });
+    const model = new MockLanguageModelV4({
+      doGenerate: [toolCallResult("clientSide"), textResult("never reached")],
+    });
+    const agent = createAgent({ model, systemPrompt: "Test", tools: { clientSide } });
+
+    const result = await agent.run("go");
+
+    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(result.stopReason).toBe("other");
+  });
+
   it("keeps the maxIterations cap when a custom condition never fires", async () => {
     const model = new MockLanguageModelV4({
       doGenerate: [
@@ -104,6 +117,37 @@ describe("prepareStep", () => {
 
     expect(toolNamesSent(model, 0)).toEqual(["lookup"]);
     expect(toolNamesSent(model, 1)).toEqual(["finish"]);
+  });
+
+  it("wraps a model returned by the hook with the retry middleware", async () => {
+    let calls = 0;
+    const stepModel = new MockLanguageModelV4({
+      doGenerate: async () => {
+        calls++;
+        if (calls === 1) {
+          throw new APICallError({
+            message: "HTTP 503",
+            url: "https://api.example",
+            requestBodyValues: {},
+            statusCode: 503,
+            isRetryable: true,
+          });
+        }
+        return textResult("done");
+      },
+    });
+    const agent = createAgent({
+      model: new MockLanguageModelV4({ doGenerate: [textResult("never reached")] }),
+      systemPrompt: "Test",
+      tools: {},
+      retry: { initialDelayMs: 1, maxDelayMs: 1 },
+      prepareStep: () => ({ model: stepModel }),
+    });
+
+    const result = await agent.run("go");
+
+    expect(result.message).toBe("done");
+    expect(calls).toBe(2);
   });
 
   describe("with a context budget", () => {

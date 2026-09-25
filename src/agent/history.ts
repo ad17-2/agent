@@ -45,13 +45,17 @@ function evictTurns(history: ReadonlyArray<Message>, maxMessages: number): Messa
  * The stored request part carries only `toolCallId`; automatic approve/deny requests are never pending.
  */
 export function pendingApprovals(history: ReadonlyArray<Message>): PendingApproval[] {
-  const calls = new Map<string, { toolName: string; input: unknown }>();
+  const calls = new Map<string, Omit<PendingApproval, "approvalId" | "toolCallId" | "reason">>();
   const pending = new Map<string, PendingApproval>();
   for (const msg of history) {
     if (typeof msg.content === "string") continue;
     for (const part of msg.content) {
       if (part.type === "tool-call") {
-        calls.set(part.toolCallId, { toolName: part.toolName, input: part.input });
+        calls.set(part.toolCallId, {
+          toolName: part.toolName,
+          input: part.input,
+          ...(part.providerExecuted ? { providerExecuted: true } : {}),
+        });
       } else if (part.type === "tool-approval-request" && !part.isAutomatic) {
         const call = calls.get(part.toolCallId);
         if (!call) continue;
@@ -95,6 +99,10 @@ export function approvalResponseMessage(
   if (problems.length > 0) {
     throw new AgentError(`Invalid approval ids (${problems.join("; ")})`, "INVALID_APPROVAL");
   }
+  // The SDK forwards a response to the provider only when providerExecuted is set on it.
+  const providerExecuted = new Set(
+    pending.filter((p) => p.providerExecuted).map((p) => p.approvalId)
+  );
   return {
     role: "tool",
     content: decisions.map((d) => ({
@@ -102,18 +110,21 @@ export function approvalResponseMessage(
       approvalId: d.approvalId,
       approved: d.approved,
       ...(d.reason !== undefined ? { reason: d.reason } : {}),
+      ...(providerExecuted.has(d.approvalId) ? { providerExecuted: true } : {}),
     })),
   };
 }
 
 /**
  * Records for the tools the SDK ran (or denied) before step 0 of a resume. Their results are in
- * the first response message and in no step, and the output is the model-facing value.
+ * the first response message and in no step. `outputs` holds the raw handler results; the
+ * message part is model-facing and is read only for a call that never ran.
  */
 export function preLoopToolRecords(
   pending: ReadonlyArray<PendingApproval>,
   responseMessages: ReadonlyArray<Message>,
-  timings: ReadonlyMap<string, number>
+  timings: ReadonlyMap<string, number>,
+  outputs: ReadonlyMap<string, unknown>
 ): ToolCallRecord[] {
   const first = responseMessages[0];
   if (first?.role !== "tool") return [];
@@ -127,7 +138,11 @@ export function preLoopToolRecords(
     const record: ToolCallRecord = {
       name: toolName,
       input,
-      output: output.type === "text" || output.type === "json" ? output.value : undefined,
+      output: outputs.has(toolCallId)
+        ? outputs.get(toolCallId)
+        : output.type === "text" || output.type === "json"
+          ? output.value
+          : undefined,
       durationMs: timings.get(toolCallId) ?? 0,
     };
     if (output.type === "execution-denied") {

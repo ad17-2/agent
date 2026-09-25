@@ -12,7 +12,7 @@
 - Error code `TOOL_VALIDATION` is `INVALID_HISTORY`. `TOOL_NOT_FOUND`, `TOOL_EXECUTION`, `MAX_ITERATIONS` and `ABORTED` are removed; nothing threw them.
 - `generateStructured`: `maxTokens` is `maxOutputTokens`, `image` is replaced by `attachments` (the `RunOptions` shape), and `usage` is a full `TokenUsage`.
 - `ErrorContext` is a union: `toolName` exists only when `phase` is `"tool"`.
-- A run that a stop condition ends while the model still wants tools has `stopReason: "stop_condition"`. It was `"other"`.
+- A run that a stop condition ends while the model still wants tools has `stopReason: "stop_condition"`. It was `"other"`. A run that ends on a tool with no `execute` stays `"other"`.
 
 ### Fixed
 
@@ -33,9 +33,9 @@
 - `defineTool` takes `toModelOutput`, `onInputStart`, `onInputDelta` and `onInputAvailable`. The `ToolResultOutput` type is exported.
 - `defineDynamicTool` defines a tool whose input is not known until run time.
 - `stream()` yields `tool-input-start` and `tool-input-delta` events.
-- `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`.
+- `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`. An `output` the caller never awaits does not reject unhandled.
 - `agent.uiStream(uiMessages)` returns the SDK's UI message stream for a chat UI. It does not touch history. `createUIMessageStreamResponse`, `UIMessage` and `UIMessageChunk` are re-exported.
-- `AgentOptions.toolApproval` gates tools with the SDK's `ToolApprovalConfiguration` (re-exported). A `"user-approval"` tool stops the run with `stopReason: "needs_approval"` and `result.pendingApprovals`; `stream()` yields an `approval-request` event per gated call.
+- `AgentOptions.toolApproval` gates tools with the SDK's `ToolApprovalConfiguration` (re-exported). A `"user-approval"` tool stops the run with `stopReason: "needs_approval"` and `result.pendingApprovals`, under any finish reason; `stream()` yields an `approval-request` event per gated call. A `PendingApproval` for a provider-executed call carries `providerExecuted: true`, and the resume forwards the decision to the model.
 - `run()` and `stream()` also take `{ approvals: ApprovalDecision[] }`, which answers every pending approval and continues the turn. `AgentInput` is the widened input type; a plain string works as before. `agent.pendingApprovals()` reads the pending list from history, so it survives export and import.
 - Error codes `INVALID_APPROVAL` (an unknown, duplicate or missing id, or nothing pending) and `APPROVAL_PENDING` (a text turn while approvals are pending).
 

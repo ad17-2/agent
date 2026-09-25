@@ -67,7 +67,37 @@ describe("tool approval: the request turn", () => {
 
     expect(result.stopReason).toBe("end_turn");
     expect(result.pendingApprovals).toBeUndefined();
-    expect(result.toolsCalled[0]?.error).toMatch(/^denied/);
+    expect(result.toolsCalled[0]?.error).toBe("denied");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("2b. an automatic denial with a reason is recorded as 'denied: <reason>'", async () => {
+    const { agent } = gatedAgent({ toolApproval: { t: { type: "denied", reason: "policy" } } });
+
+    const result = await agent.run("go");
+
+    expect(result.toolsCalled[0]?.error).toBe("denied: policy");
+  });
+
+  it("2c. a gated call under finish reason 'stop' still stops with needs_approval", async () => {
+    const { t, spy } = gatedTool();
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        { ...toolCallResult("t", { x: 1 }), finishReason: { unified: "stop", raw: "end_turn" } },
+        textResult("done"),
+      ],
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: { t },
+      toolApproval: { t: "user-approval" },
+    });
+
+    const result = await agent.run("go");
+
+    expect(result.stopReason).toBe("needs_approval");
+    expect(result.pendingApprovals).toHaveLength(1);
     expect(spy).not.toHaveBeenCalled();
   });
 });
@@ -105,6 +135,39 @@ describe("tool approval: the resume turn", () => {
     const prompt = JSON.stringify(model.doGenerateCalls[1]?.prompt);
     expect(prompt).toContain("execution-denied");
     expect(prompt).toContain('"no"');
+  });
+
+  it("4b. a resumed tool with toModelOutput records the raw result while the model sees the mapped one", async () => {
+    const t = defineTool({
+      description: "Gated",
+      schema: z.object({ x: z.number() }),
+      handler: async () => ({ secret: 1, rows: 2 }),
+      toModelOutput: () => ({ type: "text", value: "summary" }),
+    });
+    const model = new MockLanguageModelV4({
+      doGenerate: [toolCallResult("t", { x: 1 }), textResult("done")],
+    });
+    const agent = createAgent({
+      model,
+      systemPrompt: "Test",
+      tools: { t },
+      toolApproval: { t: "user-approval" },
+    });
+    const first = await agent.run("go");
+
+    const result = await agent.run({
+      approvals: first.pendingApprovals!.map((p) => approve(p.approvalId)),
+    });
+
+    expect(result.toolsCalled).toEqual([
+      {
+        name: "t",
+        input: { x: 1 },
+        output: { secret: 1, rows: 2 },
+        durationMs: expect.any(Number),
+      },
+    ]);
+    expect(JSON.stringify(model.doGenerateCalls[1]?.prompt)).toContain("summary");
   });
 
   it("5. an unknown, duplicate or missing id, or nothing pending, throws INVALID_APPROVAL naming the ids", async () => {
@@ -210,6 +273,22 @@ describe("tool approval: stream", () => {
     expect(complete).toBeLessThan(types.indexOf("step-complete"));
     expect(events[complete]).toMatchObject({ name: "t", output: "ran", toolCallId: "call-1" });
     expect(events.at(-1)).toMatchObject({ result: { stopReason: "end_turn" } });
+  });
+
+  it("9b. an automatic approval never yields approval-request", async () => {
+    const { t, spy } = gatedTool();
+    const agent = createAgent({
+      model: streamModel(toolStep, textStep),
+      systemPrompt: "Test",
+      tools: { t },
+      toolApproval: { t: "approved" },
+    });
+
+    const events = await collect(agent.stream("go"));
+
+    expect(events.map((e) => e.type)).not.toContain("approval-request");
+    expect(events.at(-1)).toMatchObject({ result: { stopReason: "end_turn" } });
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

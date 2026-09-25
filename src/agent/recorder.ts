@@ -1,4 +1,4 @@
-import type { StepResult, ToolSet } from "ai";
+import type { StepResult, ToolExecutionEndEvent, ToolSet } from "ai";
 import type { AgentHooks, ToolCallRecord } from "../types.js";
 
 function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
@@ -48,6 +48,8 @@ export class StepRecorder {
   readonly toolsCalled: ToolCallRecord[] = [];
   /** Filled by onToolExecutionEnd, which the SDK awaits before it enqueues the tool-result part. */
   readonly toolTimings: Map<string, number> = new Map();
+  /** Raw handler results by call id, before `toModelOutput`; only for calls that ran and succeeded. */
+  readonly toolOutputs: Map<string, unknown> = new Map();
   /** Steps that have ended. */
   stepIndex = 0;
   private readonly onStep: AgentHooks["onStep"];
@@ -59,8 +61,11 @@ export class StepRecorder {
     this.onStep = onStep;
   }
 
-  onToolExecutionEnd(event: { toolCall: { toolCallId: string }; toolExecutionMs: number }): void {
+  onToolExecutionEnd(event: ToolExecutionEndEvent<ToolSet>): void {
     this.toolTimings.set(event.toolCall.toolCallId, event.toolExecutionMs);
+    if (event.toolOutput.type === "tool-result") {
+      this.toolOutputs.set(event.toolCall.toolCallId, event.toolOutput.output);
+    }
   }
 
   async onStepEnd(step: StepResult<ToolSet>): Promise<void> {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MockLanguageModelV4 } from "ai/test";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAgent } from "../src/agent/index.js";
-import { HistoryManager } from "../src/agent/history.js";
+import { HistoryManager, approvalResponseMessage, pendingApprovals } from "../src/agent/history.js";
 import { defineTool } from "../src/tool.js";
 import type { Message, SerializedHistoryV1 } from "../src/types.js";
 import { usage } from "./helpers.js";
@@ -201,5 +201,59 @@ describe("history import version check", () => {
         message: "Unsupported history version: 3",
       })
     );
+  });
+});
+
+describe("pending approvals and provider-executed calls", () => {
+  function requestTurn(providerExecuted: boolean): Message[] {
+    return [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "t",
+            input: { x: 1 },
+            ...(providerExecuted ? { providerExecuted: true } : {}),
+          },
+          { type: "tool-approval-request", approvalId: "appr-1", toolCallId: "call-1" },
+        ],
+      },
+    ];
+  }
+
+  it("carries providerExecuted from the tool call onto the pending approval and the response part", () => {
+    const pending = pendingApprovals(requestTurn(true));
+    expect(pending).toEqual([
+      {
+        approvalId: "appr-1",
+        toolCallId: "call-1",
+        toolName: "t",
+        input: { x: 1 },
+        providerExecuted: true,
+      },
+    ]);
+
+    const message = approvalResponseMessage(pending, [{ approvalId: "appr-1", approved: true }]);
+    expect(message.content).toEqual([
+      {
+        type: "tool-approval-response",
+        approvalId: "appr-1",
+        approved: true,
+        providerExecuted: true,
+      },
+    ]);
+  });
+
+  it("has no providerExecuted key for a client-executed call", () => {
+    const pending = pendingApprovals(requestTurn(false));
+    expect(pending[0]).not.toHaveProperty("providerExecuted");
+
+    const message = approvalResponseMessage(pending, [{ approvalId: "appr-1", approved: true }]);
+    expect(message.content).toEqual([
+      { type: "tool-approval-response", approvalId: "appr-1", approved: true },
+    ]);
   });
 });

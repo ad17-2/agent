@@ -53,14 +53,11 @@ export function streamStructured<T extends z.ZodType>(
     abortSignal,
   });
 
-  // Getters keep the SDK's promises lazy: one the caller never reads cannot reject unhandled.
-  return {
-    partial: result.partialOutputStream,
-    get output() {
-      return Promise.resolve(result.output);
-    },
-    get usage() {
-      return Promise.resolve(result.usage).then(toTokenUsage);
-    },
-  };
+  // Reading `result.output` starts the SDK's promise, so a destructured `output` the caller never awaits
+  // would reject unhandled on invalid JSON; the no-op catch marks it handled without changing what an await sees.
+  const output = Promise.resolve(result.output);
+  output.catch(() => {});
+  const usage = Promise.resolve(result.usage).then(toTokenUsage);
+  usage.catch(() => {});
+  return { partial: result.partialOutputStream, output, usage };
 }
