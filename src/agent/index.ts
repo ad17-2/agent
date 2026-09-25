@@ -7,6 +7,7 @@ import {
   type StepResult,
   type ToolSet,
 } from "ai";
+import { createAgentUIStream, type UIMessage, type UIMessageChunk } from "ai";
 import { AgentError } from "../errors.js";
 import { buildUserMessage } from "../message.js";
 import type {
@@ -392,6 +393,45 @@ export function createAgent(options: AgentOptions): Agent {
         // Reached on break/return from the consumer too: stop the model call so tokens stop streaming.
         run.cancel();
         run.dispose();
+      }
+    },
+
+    async uiStream(
+      uiMessages: UIMessage[],
+      runOptions?: RunOptions
+    ): Promise<ReadableStream<UIMessageChunk>> {
+      const { traceId, timeoutMs, abortSignal } = runOptions ?? {};
+      log("info", "Agent uiStream started", { traceId: traceId ?? agentTraceId });
+      const run = createRunSignal(timeoutMs ?? timeoutConfig?.totalMs, abortSignal);
+      try {
+        const stream = await createAgentUIStream({
+          agent: sdkAgent,
+          uiMessages,
+          abortSignal: run.signal,
+          options: { traceId },
+        });
+        const reader = stream.getReader();
+        return new ReadableStream<UIMessageChunk>({
+          async pull(controller) {
+            try {
+              const next = await reader.read();
+              if (!next.done) return controller.enqueue(next.value);
+              run.dispose();
+              controller.close();
+            } catch (error) {
+              run.dispose();
+              controller.error(error);
+            }
+          },
+          async cancel(reason) {
+            run.cancel();
+            run.dispose();
+            await reader.cancel(reason);
+          },
+        });
+      } catch (error) {
+        run.dispose();
+        throw error;
       }
     },
 

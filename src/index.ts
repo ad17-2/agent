@@ -9,8 +9,10 @@ export {
 } from "./tool.js";
 export {
   generateStructured,
+  streamStructured,
   type GenerateStructuredOptions,
   type StructuredResult,
+  type StreamStructuredResult,
 } from "./structured.js";
 export { AgentError, type AgentErrorCode } from "./errors.js";
 export { costOf, sumCost } from "./cost.js";
@@ -55,3 +57,4 @@ export type {
 
 export { z } from "zod";
 export type { TelemetryOptions } from "ai";
+export { createUIMessageStreamResponse, type UIMessage, type UIMessageChunk } from "ai";

@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { MockLanguageModelV4 } from "ai/test";
-import { generateStructured } from "../src/structured.js";
-import { usage } from "./helpers.js";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { generateStructured, streamStructured } from "../src/structured.js";
+import { streamModel, usage } from "./helpers.js";
 
 describe("generateStructured", () => {
   it("returns parsed data matching schema", async () => {
@@ -127,5 +128,68 @@ describe("generateStructured", () => {
     });
 
     await generateStructured({ model, schema, prompt: "Get text", maxOutputTokens: 1000 });
+  });
+});
+
+function jsonDeltas(...deltas: string[]): LanguageModelV4StreamPart[] {
+  return [
+    { type: "text-start", id: "t" },
+    ...deltas.map((delta): LanguageModelV4StreamPart => ({ type: "text-delta", id: "t", delta })),
+    { type: "text-end", id: "t" },
+    { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: usage(40, 12) },
+  ];
+}
+
+describe("streamStructured", () => {
+  it("yields partial objects as JSON deltas arrive, then resolves output and usage", async () => {
+    const schema = z.object({ name: z.string(), age: z.number() });
+    const model = streamModel(jsonDeltas('{"name":"Al', 'ice","age":', "30}"));
+
+    const result = streamStructured({ model, schema, prompt: "Extract person info" });
+
+    const partials: unknown[] = [];
+    for await (const partial of result.partial) partials.push(partial);
+
+    expect(partials).toEqual([{ name: "Al" }, { name: "Alice" }, { name: "Alice", age: 30 }]);
+    expect(await result.output).toEqual({ name: "Alice", age: 30 });
+    expect(await result.usage).toEqual({
+      inputTokens: 40,
+      outputTokens: 12,
+      totalTokens: 52,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("passes attachments, maxOutputTokens and the abort signal to the model call", async () => {
+    const schema = z.object({ description: z.string() });
+    const controller = new AbortController();
+    const model = streamModel(jsonDeltas('{"description":"A cat"}'));
+
+    const result = streamStructured({
+      model,
+      schema,
+      prompt: "Describe this image",
+      attachments: [{ type: "image", source: "base64", base64: "aGVsbG8=", mimeType: "image/png" }],
+      maxOutputTokens: 500,
+      abortSignal: controller.signal,
+    });
+    await result.output;
+
+    const call = model.doStreamCalls[0]!;
+    expect(call.maxOutputTokens).toBe(500);
+    expect(call.abortSignal).toBe(controller.signal);
+    const userMessage = call.prompt.find((m) => m.role === "user")!;
+    expect(userMessage.content.map((part) => part.type)).toEqual(["file", "text"]);
+  });
+
+  it("rejects output when the streamed JSON does not match the schema", async () => {
+    const schema = z.object({ age: z.number() });
+    const model = streamModel(jsonDeltas('{"age":"thirty"}'));
+
+    const result = streamStructured({ model, schema, prompt: "Get age" });
+
+    await expect(result.output).rejects.toThrow();
   });
 });

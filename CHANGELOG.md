@@ -26,6 +26,8 @@
 - `DefinedTool`, `ProviderOptions`, `ImageMimeType` and `AttachmentMimeType` are exported.
 - `package.json` declares `sideEffects: false`.
 - Runnable examples for every feature under `examples/`, run by `pnpm examples` and in CI.
+- `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`.
+- `agent.uiStream(uiMessages)` returns the SDK's UI message stream for a chat UI. It does not touch history. `createUIMessageStreamResponse`, `UIMessage` and `UIMessageChunk` are re-exported.
 
 ### Migrating from 0.5.x
 

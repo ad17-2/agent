@@ -6,6 +6,7 @@ import type {
   ToolLoopAgentSettings,
   ToolSet,
 } from "ai";
+import type { UIMessage, UIMessageChunk } from "ai";
 
 /** Provider-specific call options, e.g. `{ anthropic: { thinking: {...} } }`; the SDK's own type (JSON values only). */
 export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
@@ -238,6 +239,8 @@ export interface AgentResult {
 export interface Agent {
   run(input: string, options?: RunOptions): Promise<AgentResult>;
   stream(input: string, options?: RunOptions): AsyncGenerator<AgentEvent, AgentResult, undefined>;
+  /** Streams the SDK's UI message chunks for client-owned messages; history is neither read nor written. */
+  uiStream(uiMessages: UIMessage[], options?: RunOptions): Promise<ReadableStream<UIMessageChunk>>;
   clearHistory(): void;
   exportHistory(): SerializedHistory;
   importHistory(history: SerializedHistory | SerializedHistoryV1): void;

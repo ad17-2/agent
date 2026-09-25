@@ -59,6 +59,8 @@ node examples/streaming.ts          # one example, after pnpm build
 | [`retry-and-timeouts.ts`](examples/retry-and-timeouts.ts) | a retried 529, a per-tool timeout, a run timeout |
 | [`mcp.ts`](examples/mcp.ts) | `loadMcpTools` against a stdio MCP server |
 | [`telemetry-console.ts`](examples/telemetry-console.ts) | OpenTelemetry spans printed to the console |
+| [`streaming-structured.ts`](examples/streaming-structured.ts) | `streamStructured`, partial objects as the JSON arrives |
+| [`ui-stream.ts`](examples/ui-stream.ts) | `uiStream()`, the UI message chunk types for one user message |
 
 ## Tools and runs
 
@@ -135,6 +137,19 @@ for await (const event of agent.stream("Where is order A1? Refund it.")) {
 `stream()` does not throw. A failed model call yields `error`, then `complete` with `stopReason: "error"`, and calls `onError` with `phase: "api"`. An abort or timeout yields `complete` with `stopReason: "aborted"` or `"timeout"` and no `error` event.
 
 Breaking out of the loop aborts the run. The in-flight model request and any running tool see the abort, the run timer is cleared, and the turn is not added to history. No further events or hooks run after a break.
+
+## UI message streams
+
+```typescript
+import { createUIMessageStreamResponse, type UIMessage } from "@ad17-2/agent";
+
+export async function POST(request: Request) {
+  const { messages }: { messages: UIMessage[] } = await request.json();
+  return createUIMessageStreamResponse({ stream: await agent.uiStream(messages) });
+}
+```
+
+`uiStream(uiMessages, options)` runs the agent through the SDK's `createAgentUIStream` and returns its `UIMessageChunk` stream, the format `useChat` reads. The client owns the messages: `uiStream` does not read or write the agent's history, and `attachments` is ignored. `abortSignal`, `timeoutMs` and `traceId` work as in `run()`. An abort or timeout ends the stream, and cancelling the stream aborts the model call.
 
 ## Attachments and history
 
@@ -329,6 +344,16 @@ const { data, usage } = await generateStructured({
 
 `generateStructured` makes a `generateText` call with `Output.object({ schema })`. It takes `attachments`, `maxOutputTokens` and `abortSignal` like a run, and returns `usage` as `TokenUsage`. It has no `retry` option and keeps the SDK's default retries.
 
+```typescript
+import { streamStructured } from "@ad17-2/agent";
+
+const { partial, output, usage } = streamStructured({ model, schema, prompt });
+for await (const draft of partial) render(draft);
+const data = await output;
+```
+
+`streamStructured` takes the same options and makes a `streamText` call. `partial` yields a deep-partial object each time the parsed JSON grows. `output` resolves to the validated object and rejects when it does not match the schema. `usage` resolves to `TokenUsage`.
+
 ## Thinking and provider options
 
 ```typescript
@@ -444,6 +469,10 @@ The types are exported from the package root. This section lists what the types 
 | `usage` | Input, output, total, cache read, cache write and reasoning tokens, summed over steps and any summary call |
 | `cost` | Present when `pricing` is set |
 | `thinking` | The final step's reasoning text, when there is any |
+
+`agent.uiStream(uiMessages, options)` returns a `ReadableStream<UIMessageChunk>` for a chat UI. It takes the same options except `attachments` and leaves history alone. See [UI message streams](#ui-message-streams).
+
+`generateStructured(options)` and `streamStructured(options)` take `{ model, schema, prompt, attachments?, maxOutputTokens?, abortSignal? }`. See [structured output](#structured-output).
 
 `agent.clearHistory()`, `agent.exportHistory()` and `agent.importHistory(history)` manage the stored conversation.
 
