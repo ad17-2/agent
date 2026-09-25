@@ -1,4 +1,4 @@
-import type { StepResult, ToolSet } from "ai";
+import type { StepResult, ToolExecutionEndEvent, ToolSet } from "ai";
 import type { AgentHooks, ToolCallRecord } from "../types.js";
 
 function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
@@ -10,10 +10,21 @@ function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
       .map((part) => [part.toolCallId, part])
   );
   const resultsById = new Map(step.toolResults.map((result) => [result.toolCallId, result]));
+  const requestedIds = new Set<string>();
+  const deniedById = new Map<string, string | undefined>();
+  for (const part of step.content) {
+    if (part.type === "tool-approval-request") requestedIds.add(part.toolCall.toolCallId);
+    if (part.type === "tool-approval-response" && !part.approved) {
+      deniedById.set(part.toolCall.toolCallId, part.reason);
+    }
+  }
 
-  return step.toolCalls.map((call) => {
+  return step.toolCalls.flatMap((call) => {
     const errorPart = errorsById.get(call.toolCallId);
     const result = resultsById.get(call.toolCallId);
+    const denied = deniedById.has(call.toolCallId);
+    // A call waiting for a human never ran, so it has no record until the resume.
+    if (!errorPart && !result && !denied && requestedIds.has(call.toolCallId)) return [];
 
     const record: ToolCallRecord = {
       name: call.toolName,
@@ -24,8 +35,11 @@ function toolCallRecords(step: StepResult<ToolSet>): ToolCallRecord[] {
     if (errorPart) {
       record.error =
         errorPart.error instanceof Error ? errorPart.error.message : String(errorPart.error);
+    } else if (denied) {
+      const reason = deniedById.get(call.toolCallId);
+      record.error = reason === undefined ? "denied" : `denied: ${reason}`;
     }
-    return record;
+    return [record];
   });
 }
 
@@ -34,6 +48,8 @@ export class StepRecorder {
   readonly toolsCalled: ToolCallRecord[] = [];
   /** Filled by onToolExecutionEnd, which the SDK awaits before it enqueues the tool-result part. */
   readonly toolTimings: Map<string, number> = new Map();
+  /** Raw handler results by call id, before `toModelOutput`; only for calls that ran and succeeded. */
+  readonly toolOutputs: Map<string, unknown> = new Map();
   /** Steps that have ended. */
   stepIndex = 0;
   private readonly onStep: AgentHooks["onStep"];
@@ -45,8 +61,11 @@ export class StepRecorder {
     this.onStep = onStep;
   }
 
-  onToolExecutionEnd(event: { toolCall: { toolCallId: string }; toolExecutionMs: number }): void {
+  onToolExecutionEnd(event: ToolExecutionEndEvent<ToolSet>): void {
     this.toolTimings.set(event.toolCall.toolCallId, event.toolExecutionMs);
+    if (event.toolOutput.type === "tool-result") {
+      this.toolOutputs.set(event.toolCall.toolCallId, event.toolOutput.output);
+    }
   }
 
   async onStepEnd(step: StepResult<ToolSet>): Promise<void> {

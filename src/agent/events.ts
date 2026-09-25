@@ -13,6 +13,12 @@ export function toAgentEvent(
     case "reasoning-delta":
       return { type: "thinking", content: part.text };
 
+    case "tool-input-start":
+      return { type: "tool-input-start", name: part.toolName, toolCallId: part.id };
+
+    case "tool-input-delta":
+      return { type: "tool-input-delta", toolCallId: part.id, delta: part.delta };
+
     case "tool-call":
       return {
         type: "tool-call-start",
@@ -35,6 +41,27 @@ export function toAgentEvent(
         type: "tool-call-error",
         name: part.toolName,
         error: part.error instanceof Error ? part.error.message : String(part.error),
+        toolCallId: part.toolCallId,
+      };
+
+    case "tool-approval-request":
+      if (part.isAutomatic) return undefined;
+      return {
+        type: "approval-request",
+        approval: {
+          approvalId: part.approvalId,
+          toolCallId: part.toolCall.toolCallId,
+          toolName: part.toolCall.toolName,
+          input: part.toolCall.input,
+          ...(part.reason !== undefined ? { reason: part.reason } : {}),
+        },
+      };
+
+    case "tool-output-denied":
+      return {
+        type: "tool-call-error",
+        name: part.toolName,
+        error: "denied",
         toolCallId: part.toolCallId,
       };
 

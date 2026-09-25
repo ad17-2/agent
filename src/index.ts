@@ -1,7 +1,10 @@
 export { createAgent } from "./agent/index.js";
 export {
   defineTool,
+  defineDynamicTool,
   type DefinedTool,
+  type DynamicToolOptions,
+  type ToolResultOutput,
   type Tool,
   type ToolOptions,
   type ToolContext,
@@ -9,8 +12,10 @@ export {
 } from "./tool.js";
 export {
   generateStructured,
+  streamStructured,
   type GenerateStructuredOptions,
   type StructuredResult,
+  type StreamStructuredResult,
 } from "./structured.js";
 export { AgentError, type AgentErrorCode } from "./errors.js";
 export { costOf, sumCost } from "./cost.js";
@@ -18,8 +23,11 @@ export { estimateTokens, trimForStep, summarizeHistory, type SummarizeResult } f
 
 export type {
   Agent,
+  AgentInput,
   AgentOptions,
   AgentResult,
+  ApprovalDecision,
+  PendingApproval,
   RunOptions,
   ConversationConfig,
   ToolCallRecord,
@@ -54,4 +62,18 @@ export type {
 } from "./types.js";
 
 export { z } from "zod";
-export type { TelemetryOptions } from "ai";
+export {
+  isStepCount,
+  hasToolCall,
+  isLoopFinished,
+  pruneMessages,
+  createUIMessageStreamResponse,
+} from "ai";
+export type {
+  TelemetryOptions,
+  StopCondition,
+  PrepareStepFunction,
+  ToolApprovalConfiguration,
+  UIMessage,
+  UIMessageChunk,
+} from "ai";

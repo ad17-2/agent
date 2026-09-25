@@ -103,6 +103,17 @@ describe("trimForStep", () => {
     expect(JSON.stringify(result?.messages)).not.toEqual(JSON.stringify(messages));
   });
 
+  it("prunes with the configured prune options instead of the 'all' defaults", async () => {
+    const cfg: ContextConfig = { maxInputTokens: 1, prune: { toolCalls: "none" } };
+    const prepareStep = trimForStep(cfg);
+    const messages = [...buildTurns(2), { role: "user", content: "now" } as const];
+
+    const result = await prepareStep(prepareStepOptions(messages, 0));
+
+    expect(result?.messages).toBeDefined();
+    expect(JSON.stringify(result?.messages)).toContain("tool-call");
+  });
+
   it("calibrates chars/token from the previous step's own prompt and measured inputTokens", async () => {
     // step 0's prompt is ~420 chars and the model measured 420 tokens for it (1 char/token).
     // step 1 adds a 2000-char response. Calibrated: ~2420 tokens > 1000 budget, so prune.
@@ -260,6 +271,49 @@ describe("trimForStep", () => {
     const kept = result?.messages ?? [];
     expect(kept.slice(-3)).toEqual([runUser, ...runResponses]);
     expect(JSON.stringify(kept.slice(0, -3))).not.toContain("tool-call");
+  });
+
+  it("13. on a resume step keeps the tool call and approval request the response answers", async () => {
+    const cfg: ContextConfig = { maxInputTokens: 1 };
+    const prepareStep = trimForStep(cfg);
+    const history = buildTurns(2) as ModelMessage[];
+    const requestTurn: ModelMessage[] = [
+      { role: "user", content: "delete it" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "gated-1", toolName: "lookup", input: { q: 1 } },
+          { type: "tool-approval-request", approvalId: "appr-1", toolCallId: "gated-1" },
+        ],
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool-approval-response", approvalId: "appr-1", approved: true }],
+      },
+    ];
+    const responseMessages: ResponseMessages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "gated-1",
+            toolName: "lookup",
+            output: { type: "text", value: "deleted" },
+          },
+        ],
+      },
+    ];
+    const initialMessages = [...history, ...requestTurn];
+    const messages = [...initialMessages, ...responseMessages];
+
+    const result = await prepareStep(
+      prepareStepOptions(messages, 0, { initialMessages, responseMessages })
+    );
+
+    const kept = result?.messages ?? [];
+    expect(kept.slice(-4)).toEqual([...requestTurn, ...responseMessages]);
+    expect(JSON.stringify(kept.slice(0, -4))).not.toContain("tool-call");
   });
 });
 

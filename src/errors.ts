@@ -1,4 +1,9 @@
-export type AgentErrorCode = "API_ERROR" | "INVALID_HISTORY" | "MCP_TOOL_CONFLICT";
+export type AgentErrorCode =
+  | "API_ERROR"
+  | "INVALID_HISTORY"
+  | "MCP_TOOL_CONFLICT"
+  | "INVALID_APPROVAL"
+  | "APPROVAL_PENDING";
 
 export class AgentError extends Error {
   override readonly name = "AgentError";

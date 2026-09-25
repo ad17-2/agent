@@ -1,6 +1,26 @@
 # Changelog
 
-## [0.6.0] - Unreleased
+## [0.7.0] - Unreleased
+
+### Breaking
+
+- A run that a stop condition ends while the model still wants tools has `stopReason: "stop_condition"`. It was `"other"`. A run that ends on a tool with no `execute` stays `"other"`.
+
+### Added
+
+- `AgentOptions.stopWhen` adds SDK stop conditions to the `maxIterations` cap. `isStepCount`, `hasToolCall`, `isLoopFinished` and the `StopCondition` type are re-exported.
+- `AgentOptions.prepareStep` runs the SDK's `PrepareStepFunction` before each step, after context trimming. The `PrepareStepFunction` type is re-exported.
+- `ContextConfig.prune` sets the `pruneMessages` options for in-run trimming. `pruneMessages` is re-exported.
+- `defineTool` takes `toModelOutput`, `onInputStart`, `onInputDelta` and `onInputAvailable`. The `ToolResultOutput` type is exported.
+- `defineDynamicTool` defines a tool whose input is not known until run time.
+- `stream()` yields `tool-input-start` and `tool-input-delta` events.
+- `streamStructured` streams structured output: `partial` objects as the JSON arrives, then `output` and `usage`. An `output` the caller never awaits does not reject unhandled.
+- `agent.uiStream(uiMessages)` returns the SDK's UI message stream for a chat UI. It does not touch history. `createUIMessageStreamResponse`, `UIMessage` and `UIMessageChunk` are re-exported.
+- `AgentOptions.toolApproval` gates tools with the SDK's `ToolApprovalConfiguration` (re-exported). A `"user-approval"` tool stops the run with `stopReason: "needs_approval"` and `result.pendingApprovals`, under any finish reason; `stream()` yields an `approval-request` event per gated call. A `PendingApproval` for a provider-executed call carries `providerExecuted: true`, and the resume forwards the decision to the model.
+- `run()` and `stream()` also take `{ approvals: ApprovalDecision[] }`, which answers every pending approval and continues the turn. `AgentInput` is the widened input type; a plain string works as before. `agent.pendingApprovals()` reads the pending list from history, so it survives export and import.
+- Error codes `INVALID_APPROVAL` (an unknown, duplicate or missing id, or nothing pending) and `APPROVAL_PENDING` (a text turn while approvals are pending).
+
+## [0.6.0] - 2026-09-25
 
 ### Breaking
 

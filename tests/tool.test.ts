@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
-import { defineTool } from "../src/tool.js";
+import { defineDynamicTool, defineTool, type ToolContext } from "../src/tool.js";
 import { executeOptions } from "./helpers.js";
 
 describe("defineTool", () => {
@@ -136,5 +136,47 @@ describe("defineTool", () => {
     const result = await tool.execute!({}, executeOptions("async-error"));
 
     expect(result).toEqual({ recovered: true, message: "Failed" });
+  });
+});
+
+describe("defineDynamicTool", () => {
+  it("creates a dynamic tool whose handler gets the raw input and the tool context", async () => {
+    const controller = new AbortController();
+    let received: [unknown, ToolContext] | undefined;
+    const tool = defineDynamicTool({
+      description: "Anything",
+      handler: async (input, ctx) => {
+        received = [input, ctx];
+        return "ok";
+      },
+      timeoutMs: 50,
+    });
+
+    const result = await tool.execute!({ any: 1 }, executeOptions("dyn-1", controller.signal));
+
+    expect(tool.type).toBe("dynamic");
+    expect(tool.description).toBe("Anything");
+    expect(tool.timeoutMs).toBe(50);
+    expect(result).toBe("ok");
+    expect(received).toEqual([{ any: 1 }, { abortSignal: controller.signal, toolCallId: "dyn-1" }]);
+  });
+
+  it("routes a thrown error to onError, and rethrows without one", async () => {
+    const failing = async () => {
+      throw new Error("dyn failed");
+    };
+    const handled = defineDynamicTool({
+      description: "Handled",
+      handler: failing,
+      onError: ({ error, input, toolCallId }) => ({ recovered: error.message, input, toolCallId }),
+    });
+    const unhandled = defineDynamicTool({ description: "Unhandled", handler: failing });
+
+    await expect(handled.execute!({ a: 1 }, executeOptions("dyn-2"))).resolves.toEqual({
+      recovered: "dyn failed",
+      input: { a: 1 },
+      toolCallId: "dyn-2",
+    });
+    await expect(unhandled.execute!({}, executeOptions("dyn-3"))).rejects.toThrow("dyn failed");
   });
 });
